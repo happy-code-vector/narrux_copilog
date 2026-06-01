@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
 from config.settings import get_settings
+from db.session import init_db, close_pool
 
 settings = get_settings()
 
@@ -32,13 +33,15 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan — startup and shutdown."""
     logger.info("starting_aitrate_agent", environment=settings.environment)
+    await init_db()  # Create tables if they don't exist
     yield
+    await close_pool()
     logger.info("shutting_down_aitrate_agent")
 
 
 app = FastAPI(
     title="aiTrate Co-Pilot API",
-    description="AI Agent for NARRUX trading platform — strategy explanation, backtest interpretation, TSI grading, parameter recommendations, drift detection.",
+    description="AI Agent for NARRUX trading platform",
     version="0.1.0",
     lifespan=lifespan,
 )

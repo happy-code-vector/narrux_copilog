@@ -1,9 +1,6 @@
 """Knowledge base lookup tools — query parameter classes, filter info, strategy specs.
 
-These tools query the vector store and return structured data.
-They are thin wrappers around the retrieval layer.
-
-NO framework imports. Pure Python + Pydantic.
+Uses asyncpg connection + VectorStore.
 """
 
 import structlog
@@ -26,24 +23,14 @@ async def lookup_filter_info(
     request: FilterInfoRequest,
     vector_store: VectorStore,
 ) -> FilterInfoResponse:
-    """Look up filter information from the knowledge base.
-
-    Args:
-        request: Filter lookup request.
-        vector_store: Vector store instance for retrieval.
-
-    Returns:
-        Filter information with citation.
-    """
+    """Look up filter information from the knowledge base."""
     logger.info("looking_up_filter", filter_id=request.filter_id, strategy=request.strategy)
 
-    # Build query
     query = f"Filter {request.filter_id}"
     if request.strategy:
         query += f" in {request.strategy}"
     query += " — what does it do, what are its parameters, what class is it"
 
-    # Retrieve from KB
     results = await vector_store.search(
         query=query,
         top_k=5,
@@ -51,7 +38,6 @@ async def lookup_filter_info(
     )
 
     if not results:
-        # Try broader search
         results = await vector_store.search(query=query, top_k=5)
 
     if not results:
@@ -60,7 +46,6 @@ async def lookup_filter_info(
             "The filter glossary may not be ingested yet."
         )
 
-    # Use top result
     top = results[0]
 
     return FilterInfoResponse(
@@ -79,15 +64,7 @@ async def lookup_parameter_class(
     request: ParameterClassRequest,
     vector_store: VectorStore,
 ) -> ParameterClassResponse:
-    """Look up parameter class (A/B/C) from the knowledge base.
-
-    Args:
-        request: Parameter class lookup request.
-        vector_store: Vector store instance for retrieval.
-
-    Returns:
-        Parameter class information with citation.
-    """
+    """Look up parameter class (A/B/C) from the knowledge base."""
     logger.info(
         "looking_up_parameter_class",
         parameter=request.parameter_name,
@@ -115,7 +92,6 @@ async def lookup_parameter_class(
 
     top = results[0]
 
-    # Parse class from metadata or content
     class_str = top.metadata.get("class", "B")
     try:
         param_class = ParameterClass(class_str)
@@ -138,15 +114,7 @@ async def lookup_strategy_spec(
     request: StrategySpecRequest,
     vector_store: VectorStore,
 ) -> StrategySpecResponse:
-    """Look up strategy specification from the knowledge base.
-
-    Args:
-        request: Strategy spec lookup request.
-        vector_store: Vector store instance for retrieval.
-
-    Returns:
-        Strategy specification with citation.
-    """
+    """Look up strategy specification from the knowledge base."""
     logger.info("looking_up_strategy", strategy=request.strategy_name, aspect=request.aspect)
 
     query = f"{request.strategy_name} strategy specification"
@@ -168,7 +136,6 @@ async def lookup_strategy_spec(
             "The strategy spec may not be ingested yet."
         )
 
-    # Combine top results for comprehensive answer
     combined_content = "\n\n".join(r.content for r in results[:3])
     top = results[0]
 

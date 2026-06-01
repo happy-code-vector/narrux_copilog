@@ -1,4 +1,4 @@
-"""Evaluation harness — run eval questions against the agent.
+"""Evaluation harness — run eval questions against the knowledge base.
 
 Usage:
     python scripts/run_eval.py --pillar A
@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 
 from config.settings import get_settings
-from db.session import async_session_factory
+from db.session import get_pool, init_db
 from retrieval.embeddings import EmbeddingClient
 from retrieval.vector_store import VectorStore
 from retrieval.reranker import Reranker
@@ -21,7 +21,6 @@ async def run_eval(pillar: str = "A"):
     """Run evaluation for a specific pillar."""
     settings = get_settings()
 
-    # Load eval questions
     eval_dir = Path(__file__).parent.parent / "eval" / "questions"
     question_file = eval_dir / f"pillar_{pillar.lower()}.json"
 
@@ -34,29 +33,29 @@ async def run_eval(pillar: str = "A"):
 
     print(f"Running eval for Pillar {pillar}: {len(questions)} questions")
 
-    async with async_session_factory() as session:
+    await init_db()
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
         embeddings = EmbeddingClient()
-        vector_store = VectorStore(session, embeddings)
+        vector_store = VectorStore(conn, embeddings)
         reranker = Reranker()
 
         results = []
         for i, q in enumerate(questions, 1):
             print(f"\n[{i}/{len(questions)}] {q['question'][:80]}...")
 
-            # Retrieve
             search_results = await vector_store.search(
                 query=q["question"],
                 top_k=settings.retrieval_top_k,
             )
 
-            # Rerank
             reranked = await reranker.rerank(
                 query=q["question"],
                 results=search_results,
                 top_n=settings.retrieval_top_n,
             )
 
-            # Check if any result contains the expected answer
             expected_keywords = q.get("keywords", [])
             found_keywords = []
             for result in reranked:
@@ -76,7 +75,6 @@ async def run_eval(pillar: str = "A"):
 
             print(f"  Recall: {recall:.2%} ({len(set(found_keywords))}/{len(expected_keywords)} keywords)")
 
-        # Summary
         avg_recall = sum(r["recall"] for r in results) / len(results) if results else 0.0
         avg_similarity = sum(r["top_similarity"] for r in results) / len(results) if results else 0.0
 

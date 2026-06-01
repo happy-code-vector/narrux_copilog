@@ -1,13 +1,11 @@
 """Trade database reader — read-only queries against unified trade DB.
 
-NO framework imports. Pure Python + SQLAlchemy + Pydantic.
+Uses asyncpg directly (no ORM).
 """
 
 import structlog
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
+import asyncpg
 
-from db.models import TradeRecord as TradeRecordDB
 from tools.schemas import (
     TradeDBQueryRequest,
     TradeDBQueryResponse,
@@ -19,26 +17,26 @@ from tools.schemas import (
 logger = structlog.get_logger(__name__)
 
 
-def _db_to_schema(trade: TradeRecordDB) -> TradeRecord:
-    """Convert database model to Pydantic schema."""
+def _row_to_schema(row: asyncpg.Record) -> TradeRecord:
+    """Convert database row to Pydantic schema."""
     return TradeRecord(
-        strategy_id=trade.strategy_id,
-        asset=trade.asset,
-        source=TradeSource(trade.source),
-        entry_time=trade.entry_time,
-        exit_time=trade.exit_time,
-        direction=trade.direction,
-        entry_price=trade.entry_price,
-        exit_price=trade.exit_price,
-        quantity=trade.quantity,
-        pnl=trade.pnl,
-        pnl_pct=trade.pnl_pct,
-        fees=trade.fees,
-        slippage_pct=trade.slippage_pct,
-        entry_method=trade.entry_method,
-        exit_reason=trade.exit_reason,
-        filters_fired=trade.filters_fired,
-        parameters=trade.parameters,
+        strategy_id=row["strategy_id"],
+        asset=row["asset"],
+        source=TradeSource(row["source"]),
+        entry_time=row["entry_time"],
+        exit_time=row["exit_time"],
+        direction=row["direction"],
+        entry_price=row["entry_price"],
+        exit_price=row["exit_price"],
+        quantity=row["quantity"],
+        pnl=row["pnl"],
+        pnl_pct=row["pnl_pct"],
+        fees=row["fees"] or 0.0,
+        slippage_pct=row["slippage_pct"],
+        entry_method=row["entry_method"],
+        exit_reason=row["exit_reason"],
+        filters_fired=row["filters_fired"],
+        parameters=row["parameters"],
     )
 
 
@@ -78,17 +76,9 @@ def _compute_summary(trades: list[TradeRecord]) -> TradeSummary:
 
 async def query_trade_db(
     request: TradeDBQueryRequest,
-    session: AsyncSession,
+    conn: asyncpg.Connection,
 ) -> TradeDBQueryResponse:
-    """Query the trade database (read-only).
-
-    Args:
-        request: Query parameters.
-        session: Async database session.
-
-    Returns:
-        Matching trades with summary statistics.
-    """
+    """Query the trade database (read-only)."""
     logger.info(
         "querying_trade_db",
         strategy_id=request.strategy_id,
@@ -96,41 +86,52 @@ async def query_trade_db(
         source=request.source,
     )
 
-    # Build query
-    query = select(TradeRecordDB)
+    # Build query dynamically
+    conditions = []
+    params = []
+    idx = 1
 
     if request.strategy_id:
-        query = query.where(TradeRecordDB.strategy_id == request.strategy_id)
+        conditions.append(f"strategy_id = ${idx}")
+        params.append(request.strategy_id)
+        idx += 1
     if request.asset:
-        query = query.where(TradeRecordDB.asset == request.asset)
+        conditions.append(f"asset = ${idx}")
+        params.append(request.asset)
+        idx += 1
     if request.source:
-        query = query.where(TradeRecordDB.source == request.source.value)
+        conditions.append(f"source = ${idx}")
+        params.append(request.source.value)
+        idx += 1
     if request.start_date:
-        query = query.where(TradeRecordDB.entry_time >= request.start_date)
+        conditions.append(f"entry_time >= ${idx}")
+        params.append(request.start_date)
+        idx += 1
     if request.end_date:
-        query = query.where(TradeRecordDB.entry_time <= request.end_date)
+        conditions.append(f"entry_time <= ${idx}")
+        params.append(request.end_date)
+        idx += 1
 
-    query = query.order_by(TradeRecordDB.entry_time.desc()).limit(request.limit)
+    where_clause = " AND ".join(conditions) if conditions else "true"
 
-    # Execute
-    result = await session.execute(query)
-    db_trades = result.scalars().all()
+    # Main query with limit
+    sql = f"""
+        SELECT * FROM trade_records
+        WHERE {where_clause}
+        ORDER BY entry_time DESC
+        LIMIT ${idx}
+    """
+    params.append(request.limit)
 
-    # Convert to schema
-    trades = [_db_to_schema(t) for t in db_trades]
+    rows = await conn.fetch(sql, *params)
+    trades = [_row_to_schema(row) for row in rows]
+
+    # Count query
+    count_sql = f"SELECT COUNT(*) as cnt FROM trade_records WHERE {where_clause}"
+    count_row = await conn.fetchrow(count_sql, *params[:-1])  # Exclude limit param
+    total_count = count_row["cnt"] if count_row else 0
+
     summary = _compute_summary(trades)
-
-    # Get total count (without limit)
-    count_query = select(func.count(TradeRecordDB.id))
-    if request.strategy_id:
-        count_query = count_query.where(TradeRecordDB.strategy_id == request.strategy_id)
-    if request.asset:
-        count_query = count_query.where(TradeRecordDB.asset == request.asset)
-    if request.source:
-        count_query = count_query.where(TradeRecordDB.source == request.source.value)
-
-    total_result = await session.execute(count_query)
-    total_count = total_result.scalar() or 0
 
     logger.info(
         "trade_db_queried",

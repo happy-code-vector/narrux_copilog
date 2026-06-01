@@ -9,21 +9,19 @@ import asyncio
 import argparse
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from config.settings import get_settings
-from db.session import async_session_factory
+from db.session import get_pool, init_db
 from retrieval.embeddings import EmbeddingClient
 from retrieval.ingestion import ingest_document, ingest_directory
 
 
 async def main():
     parser = argparse.ArgumentParser(description="Ingest documents into the aiTrate knowledge base")
-    parser.add_argument("--dir", type=str, help="Directory to ingest (all supported files)")
+    parser.add_argument("--dir", type=str, help="Directory to ingest")
     parser.add_argument("--file", type=str, help="Single file to ingest")
     parser.add_argument("--owner", type=str, required=True, help="Document owner")
     parser.add_argument("--version", type=str, default="1.0", help="Document version")
-    parser.add_argument("--recursive", action="store_true", default=True, help="Scan subdirectories")
+    parser.add_argument("--recursive", action="store_true", default=True)
 
     args = parser.parse_args()
 
@@ -33,7 +31,11 @@ async def main():
     settings = get_settings()
     embedding_client = EmbeddingClient()
 
-    async with async_session_factory() as session:
+    # Initialize database
+    await init_db()
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
         if args.dir:
             directory = Path(args.dir)
             if not directory.exists():
@@ -43,7 +45,7 @@ async def main():
             print(f"Ingesting directory: {directory}")
             results = await ingest_directory(
                 directory=directory,
-                session=session,
+                conn=conn,
                 embedding_client=embedding_client,
                 owner=args.owner,
                 doc_version=args.version,
@@ -64,15 +66,13 @@ async def main():
             print(f"Ingesting file: {file_path}")
             count = await ingest_document(
                 file_path=file_path,
-                session=session,
+                conn=conn,
                 embedding_client=embedding_client,
                 owner=args.owner,
                 doc_version=args.version,
             )
 
             print(f"\nIngestion complete: {count} chunks created")
-
-        await session.commit()
 
 
 if __name__ == "__main__":

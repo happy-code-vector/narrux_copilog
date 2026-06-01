@@ -1,16 +1,13 @@
 """Agent definition — the core of the aiTrate Co-Pilot.
 
-This module defines the agent's behavior, tools, and prompt routing.
-It uses the LLMClient protocol (not Pydantic AI directly).
-
-Framework-coupled code is isolated to pydantic_ai_adapter.py.
+Uses asyncpg connection directly (no ORM).
 """
 
 import time
 import structlog
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+import asyncpg
 
 from audit.logger import AuditLogger
 from config.settings import get_settings
@@ -18,23 +15,11 @@ from retrieval.citation import CitationEnforcer
 from retrieval.embeddings import EmbeddingClient
 from retrieval.reranker import Reranker
 from retrieval.vector_store import VectorStore
-from orchestration.llm_client import LLMClient, LLMResponse, Tool
-from tools.schemas import (
-    FilterInfoRequest,
-    ParameterClassRequest,
-    BacktestParseRequest,
-    TSIScoreRequest,
-    TradeDBQueryRequest,
-    DriftAnalysisRequest,
-    ParameterRecommendationRequest,
-)
-from validation.output_validator import OutputValidator
+from orchestration.llm_client import LLMClient, LLMResponse
 
 logger = structlog.get_logger(__name__)
-
 settings = get_settings()
 
-# Load prompt templates
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
@@ -52,25 +37,23 @@ class AiTrateAgent:
     Orchestrates: retrieval → tool calls → validation → audit logging.
 
     Usage:
-        agent = AiTrateAgent(llm_client, session)
+        agent = AiTrateAgent(llm_client, conn)
         response = await agent.chat("What does F19 do?", user_id="analyst-001")
     """
 
     def __init__(
         self,
         llm_client: LLMClient,
-        session: AsyncSession,
+        conn: asyncpg.Connection,
     ):
         self._llm = llm_client
-        self._session = session
+        self._conn = conn
         self._embeddings = EmbeddingClient()
-        self._vector_store = VectorStore(session, self._embeddings)
+        self._vector_store = VectorStore(conn, self._embeddings)
         self._reranker = Reranker()
         self._citation_enforcer = CitationEnforcer()
-        self._output_validator = OutputValidator()
-        self._audit_logger = AuditLogger(session)
+        self._audit_logger = AuditLogger(conn)
 
-        # Load system prompt
         self._system_prompt = _load_prompt("system_v1.0.md") or self._default_system_prompt()
 
     def _default_system_prompt(self) -> str:
@@ -102,18 +85,8 @@ When answering:
         self,
         message: str,
         user_id: str,
-        conversation_id: str | None = None,
     ) -> dict:
-        """Process a user message and return a response.
-
-        Args:
-            message: User's message.
-            user_id: ID of the user.
-            conversation_id: Optional conversation ID for context.
-
-        Returns:
-            Dict with response, citations, tools_called, etc.
-        """
+        """Process a user message and return a response."""
         start_time = time.monotonic()
 
         logger.info("agent_chat", user_id=user_id, message=message[:100])
@@ -131,10 +104,10 @@ When answering:
             top_n=settings.retrieval_top_n,
         )
 
-        # Step 3: Build context from retrieved chunks
+        # Step 3: Build context
         context = self._build_context(reranked_results)
 
-        # Step 4: Generate response with LLM
+        # Step 4: Generate response
         user_message_with_context = f"""Context from knowledge base:
 {context}
 
@@ -157,7 +130,6 @@ Answer the question using the context above. Cite your sources."""
 
         if not is_valid:
             logger.warning("uncited_claims_detected", uncited_count=len(uncited))
-            # Add disclaimer
             response.content += "\n\n⚠️ Some claims could not be verified against the knowledge base."
 
         # Step 6: Format with citations
@@ -170,7 +142,7 @@ Answer the question using the context above. Cite your sources."""
         latency_ms = int((time.monotonic() - start_time) * 1000)
         await self._audit_logger.log(
             user_id=user_id,
-            function_id="F-01",  # Default to strategy explainer
+            function_id="F-01",
             query=message,
             response=formatted_response,
             citations={
