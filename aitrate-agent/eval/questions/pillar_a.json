@@ -1,0 +1,82 @@
+[
+    {
+        "id": "A-001",
+        "question": "What does filter F19 do in the Master Long strategy?",
+        "expected_answer": "F19 is the multi-day support/resistance proximity filter that identifies when price is near significant S/R levels from the previous trading day.",
+        "keywords": ["F19", "multi-day", "support", "resistance", "proximity", "filter"],
+        "difficulty": "basic",
+        "pillar": "A"
+    },
+    {
+        "id": "A-002",
+        "question": "What is the difference between Class A, Class B, and Class C parameters?",
+        "expected_answer": "Class A is set-and-forget (stable 12+ months), Class B drifts quarterly and can be AI-tuned within bounds, Class C is regime-coupled and unstable.",
+        "keywords": ["Class A", "Class B", "Class C", "set and forget", "quarterly", "regime"],
+        "difficulty": "basic",
+        "pillar": "A"
+    },
+    {
+        "id": "A-003",
+        "question": "Explain the BE2 exit mechanism in the Master Long strategy.",
+        "expected_answer": "BE2 is a dual break-even stop with independent triggers and buffers (BE1 + BE2). It protects winning trades by moving stop-loss to entry price.",
+        "keywords": ["BE2", "break-even", "dual", "stop", "exit"],
+        "difficulty": "intermediate",
+        "pillar": "A"
+    },
+    {
+        "id": "A-004",
+        "question": "Why is the Master architecture more stable than Alpha?",
+        "expected_answer": "Master uses a single-path AND-gate architecture with one direction and three exits, making it structurally simpler and more stable than Alpha's multi-path design.",
+        "keywords": ["Master", "Alpha", "AND-gate", "single-path", "stable", "architecture"],
+        "difficulty": "intermediate",
+        "pillar": "A"
+    },
+    {
+        "id": "A-005",
+        "question": "What are the v14 additions to the Master Long filter set?",
+        "expected_answer": "Filters F26-F30 were added in v14 to the Master Long strategy.",
+        "keywords": ["F26", "F27", "F28", "F29", "F30", "v14", "additions"],
+        "difficulty": "intermediate",
+        "pillar": "A"
+    },
+    {
+        "id": "A-006",
+        "question": "What is the RT-BE-SR variant in Alpha v13?",
+        "expected_answer": "RT-BE-SR is a real-time + break-even + multi-day support/resistance variant of Alpha v13.",
+        "keywords": ["RT-BE-SR", "real-time", "break-even", "support", "resistance", "Alpha"],
+        "difficulty": "advanced",
+        "pillar": "A"
+    },
+    {
+        "id": "A-007",
+        "question": "How many filters does the Master Long v14 strategy have?",
+        "expected_answer": "Master Long v14 has 30 filters (F1-F30), with F26-F30 being v14 additions.",
+        "keywords": ["30", "filters", "F1", "F30", "Master Long", "v14"],
+        "difficulty": "basic",
+        "pillar": "A"
+    },
+    {
+        "id": "A-008",
+        "question": "What is the purpose of the PineScript architecture rules?",
+        "expected_answer": "PineScript architecture rules ensure consistent input ordering, M2 vs M1 mode handling, lookahead prevention, and proper exit guard implementation.",
+        "keywords": ["PineScript", "architecture", "rules", "input", "ordering", "lookahead"],
+        "difficulty": "advanced",
+        "pillar": "A"
+    },
+    {
+        "id": "A-009",
+        "question": "What does the parameter classification framework govern?",
+        "expected_answer": "The parameter classification framework governs which parameters can be adjusted, how often, and within what bounds. Class A is locked, Class B allows quarterly drift, Class C is regime-coupled.",
+        "keywords": ["parameter", "classification", "framework", "governance", "Class A", "Class B", "Class C"],
+        "difficulty": "intermediate",
+        "pillar": "A"
+    },
+    {
+        "id": "A-010",
+        "question": "What is the difference between M1 and M2 modes in PineScript strategies?",
+        "expected_answer": "M1 and M2 are different calculation modes in PineScript. M2 is preferred for strategies as it provides more accurate backtesting results.",
+        "keywords": ["M1", "M2", "mode", "PineScript", "calculation"],
+        "difficulty": "advanced",
+        "pillar": "A"
+    }
+]
