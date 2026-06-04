@@ -1,10 +1,4 @@
-"""Orchestration layer — agent definition and LLM client adapter.
+"""Orchestration layer — ONLY layer permitted to import pydantic_ai.
 
-This is the ONLY module allowed to import pydantic_ai.
-Keep this directory ≤ 400 LOC.
+LOC budget: ≤ 500 lines across all files in this directory.
 """
-
-from orchestration.llm_client import LLMClient, LLMResponse, Tool
-from orchestration.agent import AiTrateAgent
-
-__all__ = ["LLMClient", "LLMResponse", "Tool", "AiTrateAgent"]

@@ -1,0 +1,43 @@
+[importlinter]
+root_package = .
+
+[importlinter:contract:framework-isolation]
+name = Framework isolation
+type = forbidden
+source_modules =
+    tools
+    retrieval
+    validation
+    audit
+forbidden_modules =
+    pydantic_ai
+
+[importlinter:contract:api-no-framework]
+name = API no framework
+type = forbidden
+source_modules =
+    api
+forbidden_modules =
+    pydantic_ai
+
+[importlinter:contract:tools-independence]
+name = Tools independence
+type = forbidden
+source_modules =
+    tools
+    retrieval
+    validation
+    audit
+forbidden_modules =
+    orchestration
+
+[importlinter:contract:retrieval-independence]
+name = Retrieval independence
+type = forbidden
+source_modules =
+    retrieval
+forbidden_modules =
+    tools.tsi_engine
+    tools.backtest_parser
+    tools.trade_db_reader
+    tools.leverage_engine

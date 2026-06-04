@@ -1,1 +1,1 @@
-"""API layer — FastAPI routes, auth, streaming."""
+"""API layer — FastAPI routes. Imports orchestration only, NOT pydantic_ai directly."""
