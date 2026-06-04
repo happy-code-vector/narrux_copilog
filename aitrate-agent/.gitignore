@@ -60,3 +60,5 @@ eval/results/
 
 # Alembic
 db/migrations/versions/*.py
+
+kb_content

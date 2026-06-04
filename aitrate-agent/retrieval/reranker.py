@@ -1,106 +1,140 @@
-"""Voyage AI reranker — reranks retrieved chunks for better citation accuracy.
+"""Voyage AI rerank-2 wrapper.
 
-NO framework imports. Pure Python.
+NO pydantic_ai imports. Pure Python.
 """
+
+from dataclasses import dataclass
 
 import structlog
 import voyageai
 
-from config.settings import get_settings
-from retrieval.vector_store import SearchResult
+from config import get_settings
+from tools.schemas import Citation
 
 logger = structlog.get_logger(__name__)
 
-settings = get_settings()
+
+@dataclass
+class RankedChunk:
+    """A chunk with its reranker score and rank."""
+
+    chunk: "KBChunk"  # forward reference
+    score: float
+    rank: int
 
 
-class Reranker:
-    """Voyage AI reranker client.
+async def rerank(
+    query: str,
+    chunks: list,
+    top_n: int | None = None,
+) -> list[RankedChunk]:
+    """Rerank chunks by relevance to query using Voyage rerank-2.
 
-    Takes top-K results from vector search and reranks to top-N
-    using a cross-encoder model for better relevance.
+    Filters by min_rerank_score from settings.
+    If nothing passes the threshold, returns empty list (citations-or-silence gate).
 
-    Usage:
-        reranker = Reranker()
-        reranked = await reranker.rerank(query, results, top_n=10)
+    Args:
+        query: Query string.
+        chunks: KBChunk objects from similarity search.
+        top_n: Number of top results to return. Defaults to settings.rerank_top_n.
+
+    Returns:
+        List of RankedChunk objects, filtered by min_rerank_score.
     """
+    if not chunks:
+        return []
 
-    def __init__(self):
-        self._client = voyageai.Client(api_key=settings.voyage_api_key)
-        self._model = settings.voyage_reranker_model
+    settings = get_settings()
+    if top_n is None:
+        top_n = settings.rerank_top_n
 
-    async def rerank(
-        self,
-        query: str,
-        results: list[SearchResult],
-        top_n: int = 10,
-    ) -> list[SearchResult]:
-        """Rerank search results by relevance to query.
+    client = voyageai.AsyncClient(api_key=settings.voyage_api_key)
+    documents = [c.content for c in chunks]
 
-        Args:
-            query: Original query string.
-            results: Search results from vector store.
-            top_n: Number of top results to return after reranking.
+    logger.info(
+        "reranking",
+        query=query[:100],
+        input_count=len(chunks),
+        top_n=top_n,
+        model=settings.voyage_rerank_model,
+    )
 
-        Returns:
-            Reranked results (may be fewer than input if top_n < len(results)).
-        """
-        if not results:
-            return []
+    result = await client.rerank(
+        query=query,
+        documents=documents,
+        model=settings.voyage_rerank_model,
+        top_k=top_n,
+    )
 
-        if len(results) <= top_n:
-            # No need to rerank if we have fewer results than requested
-            return results
-
-        logger.info(
-            "reranking_results",
-            input_count=len(results),
-            top_n=top_n,
-            model=self._model,
+    ranked: list[RankedChunk] = []
+    dropped = 0
+    for i, item in enumerate(result.results):
+        if item.relevance_score < settings.min_rerank_score:
+            dropped += 1
+            continue
+        ranked.append(
+            RankedChunk(
+                chunk=chunks[item.index],
+                score=item.relevance_score,
+                rank=i + 1,
+            )
         )
 
-        try:
-            # Prepare documents for reranking
-            documents = [r.content for r in results]
+    if dropped > 0:
+        logger.info(
+            "rerank_dropped_by_threshold",
+            dropped=dropped,
+            min_score=settings.min_rerank_score,
+        )
 
-            # Call Voyage reranker
-            rerank_result = self._client.rerank(
-                query=query,
-                documents=documents,
-                model=self._model,
-                top_k=top_n,
+    if not ranked:
+        logger.warning("rerank_nothing_passed_threshold — agent must abstain")
+
+    logger.info("reranking_complete", output_count=len(ranked))
+    return ranked
+
+
+def ranked_chunks_to_citations(ranked: list[RankedChunk]) -> list[Citation]:
+    """Convert ranked chunks to Citation objects.
+
+    Builds citation_handle from chunk metadata:
+    - If module_id → "Alpha Handbook §D1 — CVD Filter"
+    - If pine_line → "file.pine:L437"
+    - If section → "doc §3.2"
+    - Else fallback to doc_id
+    """
+    citations: list[Citation] = []
+    for rc in ranked:
+        meta = rc.chunk.metadata
+        handle = _build_citation_handle(meta, rc.chunk.doc_id)
+
+        citations.append(
+            Citation(
+                doc_id=rc.chunk.doc_id,
+                doc_version=rc.chunk.doc_version,
+                chunk_id=rc.chunk.chunk_id,
+                source_type=meta.get("source_type", "handbook"),
+                citation_handle=handle,
+                relevance_score=rc.score,
+                excerpt=rc.chunk.content[:300],
             )
+        )
+    return citations
 
-            # Map reranked results back to SearchResult objects
-            reranked = []
-            for item in rerank_result.results:
-                original = results[item.index]
-                # Update similarity with reranker score
-                reranked.append(
-                    SearchResult(
-                        id=original.id,
-                        content=original.content,
-                        citation_handle=original.citation_handle,
-                        source_file=original.source_file,
-                        doc_id=original.doc_id,
-                        doc_type=original.doc_type,
-                        section=original.section,
-                        line_number=original.line_number,
-                        similarity=item.relevance_score,
-                        metadata=original.metadata,
-                    )
-                )
 
-            logger.info(
-                "reranking_complete",
-                output_count=len(reranked),
-                top_score=f"{reranked[0].similarity:.4f}" if reranked else "N/A",
-            )
+def _build_citation_handle(metadata: dict, doc_id: str) -> str:
+    """Build a human-readable citation handle from chunk metadata."""
+    module_id = metadata.get("module_id")
+    module_name = metadata.get("module_name")
+    if module_id and module_name:
+        return f"§{module_id} — {module_name}"
 
-            return reranked
+    pine_line = metadata.get("pine_line")
+    if pine_line:
+        return f"{metadata.get('source_file', 'unknown')}:{pine_line}"
 
-        except Exception as e:
-            logger.error("reranking_error", error=str(e))
-            # Fallback: return top-N from original results
-            logger.info("reranking_fallback", returning=top_n)
-            return results[:top_n]
+    section = metadata.get("section")
+    if section:
+        return f"{doc_id} §{section}"
+
+    return doc_id

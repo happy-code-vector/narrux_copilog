@@ -1,76 +1,102 @@
-"""Voyage AI embedding client — generates embeddings for KB chunks and queries.
+"""Voyage AI async embedding wrapper.
 
-NO framework imports. Pure Python.
+Model: voyage-3-large (1024 dimensions).
+NO pydantic_ai imports. Pure Python.
 """
+
+from collections.abc import Sequence
+from functools import lru_cache
 
 import structlog
 import voyageai
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-from config.settings import get_settings
+from config import get_settings
 
 logger = structlog.get_logger(__name__)
 
-settings = get_settings()
+VOYAGE_BATCH_LIMIT = 128
 
 
-class EmbeddingClient:
-    """Voyage AI embedding client.
+@lru_cache(maxsize=1)
+def _get_client() -> voyageai.AsyncClient:
+    """Cached Voyage AI async client."""
+    settings = get_settings()
+    return voyageai.AsyncClient(api_key=settings.voyage_api_key)
 
-    Usage:
-        client = EmbeddingClient()
-        embeddings = await client.embed(["text1", "text2"])
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+async def embed_documents(texts: Sequence[str]) -> list[list[float]]:
+    """Embed a list of documents using Voyage AI.
+
+    Batches at 128 per Voyage limit. input_type="document".
+    Retries 3 attempts with exponential backoff.
+
+    Args:
+        texts: Document texts to embed.
+
+    Returns:
+        List of embedding vectors (each is a list of floats).
     """
+    if not texts:
+        return []
 
-    def __init__(self):
-        self._client = voyageai.Client(api_key=settings.voyage_api_key)
-        self._model = settings.voyage_embedding_model
+    settings = get_settings()
+    client = _get_client()
+    all_embeddings: list[list[float]] = []
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for a list of texts.
+    for i in range(0, len(texts), VOYAGE_BATCH_LIMIT):
+        batch = texts[i : i + VOYAGE_BATCH_LIMIT]
+        logger.info(
+            "embedding_batch",
+            batch_start=i,
+            batch_size=len(batch),
+            model=settings.voyage_embedding_model,
+        )
+        result = await client.embed(
+            texts=batch,
+            model=settings.voyage_embedding_model,
+            input_type="document",
+        )
+        all_embeddings.extend(result.embeddings)
 
-        Args:
-            texts: List of text strings to embed.
+    logger.info("embeddings_complete", total=len(all_embeddings))
+    return all_embeddings
 
-        Returns:
-            List of embedding vectors (each is a list of floats).
-        """
-        if not texts:
-            return []
 
-        logger.info("generating_embeddings", count=len(texts), model=self._model)
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+async def embed_query(query: str) -> list[float]:
+    """Embed a single query string.
 
-        try:
-            result = self._client.embed(
-                texts,
-                model=self._model,
-                input_type="document",
-            )
-            logger.info("embeddings_generated", count=len(result.embeddings))
-            return result.embeddings
-        except Exception as e:
-            logger.error("embedding_error", error=str(e))
-            raise
+    input_type="query" for retrieval-optimized embeddings.
+    Retries 3 attempts with exponential backoff.
 
-    async def embed_query(self, query: str) -> list[float]:
-        """Generate embedding for a single query string.
+    Args:
+        query: Query text to embed.
 
-        Uses "query" input type for retrieval-optimized embeddings.
+    Returns:
+        Embedding vector.
+    """
+    settings = get_settings()
+    client = _get_client()
+    result = await client.embed(
+        texts=[query],
+        model=settings.voyage_embedding_model,
+        input_type="query",
+    )
+    return result.embeddings[0]
 
-        Args:
-            query: Query text to embed.
 
-        Returns:
-            Embedding vector.
-        """
-        logger.info("generating_query_embedding", model=self._model)
+async def embed_queries(queries: Sequence[str]) -> list[list[float]]:
+    """Embed multiple queries concurrently.
 
-        try:
-            result = self._client.embed(
-                [query],
-                model=self._model,
-                input_type="query",
-            )
-            return result.embeddings[0]
-        except Exception as e:
-            logger.error("query_embedding_error", error=str(e))
-            raise
+    Args:
+        queries: Query texts to embed.
+
+    Returns:
+        List of embedding vectors.
+    """
+    import asyncio
+
+    results = await asyncio.gather(*[embed_query(q) for q in queries])
+    return list(results)
