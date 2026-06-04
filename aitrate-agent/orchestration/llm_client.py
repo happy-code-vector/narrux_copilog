@@ -1,76 +1,222 @@
-"""LLMClient protocol — the interface between agent core and LLM framework.
+"""LLM client — Protocol + two adapters (Direct Anthropic + Pydantic AI).
 
-This is the abstraction layer that makes the framework replaceable.
-The agent core calls this protocol; Pydantic AI (or any other framework) implements it.
+IMPORTANT: This is the ONLY file in the entire project that imports pydantic_ai.
+pydantic_ai imports happen inside __init__ methods, NOT at module level.
 
-NO framework imports in this file.
+LOC budget: ≤ 500 lines across orchestration/.
 """
 
-from typing import Protocol, Any
-from pydantic import BaseModel
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from typing import Protocol, runtime_checkable
+
+import structlog
+
+from config import get_settings
+
+logger = structlog.get_logger(__name__)
 
 
-class Tool(BaseModel):
-    """Tool definition for the LLM."""
-
-    name: str
-    description: str
-    parameters: dict[str, Any]
+# ─── Data Classes ────────────────────────────────────────────────────────────
 
 
-class LLMResponse(BaseModel):
+@dataclass
+class LLMRequest:
+    """Request to the LLM."""
+
+    system_prompt: str
+    user_message: str
+    context_chunks: list[str] = field(default_factory=list)
+    model: str | None = None
+    max_tokens: int | None = None
+    temperature: float = 0.1
+
+
+@dataclass
+class LLMResponse:
     """Response from the LLM."""
 
     content: str
-    tool_calls: list[dict[str, Any]] = []
-    usage: dict[str, int] = {}
-    model: str = ""
-    finish_reason: str = ""
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    raw: str  # full serialised for audit
 
 
+# ─── Protocol ────────────────────────────────────────────────────────────────
+
+
+@runtime_checkable
 class LLMClient(Protocol):
-    """Protocol for LLM client implementations.
+    """Protocol for LLM client implementations."""
 
-    Any framework adapter (Pydantic AI, Direct Build, LangGraph)
-    must implement this protocol.
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Generate a completion."""
+        ...
+
+    def system_prompt_hash(self, prompt: str) -> str:
+        """Compute a hash of the system prompt."""
+        ...
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def compute_prompt_hash(prompt: str) -> str:
+    """Compute a SHA-256 hash of the system prompt (truncated to 16 chars)."""
+    return hashlib.sha256(prompt.encode()).hexdigest()[:16]
+
+
+_COST_PER_1K: dict[str, dict[str, float]] = {
+    "claude-opus-4-7": {"input": 0.015, "output": 0.075},
+    "claude-sonnet-4-6": {"input": 0.003, "output": 0.015},
+}
+
+
+def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Estimate the cost of an LLM call in USD."""
+    costs = _COST_PER_1K.get(model, {"input": 0.015, "output": 0.075})
+    return (input_tokens / 1000 * costs["input"]) + (output_tokens / 1000 * costs["output"])
+
+
+def _build_context_block(chunks: list[str]) -> str:
+    """Build a context block from retrieved chunks."""
+    if not chunks:
+        return ""
+    lines = ["<retrieved_context>"]
+    for i, chunk in enumerate(chunks, 1):
+        lines.append(f"[{i}] {chunk}")
+    lines.append("</retrieved_context>")
+    return "\n".join(lines)
+
+
+# ─── Direct Anthropic Adapter ────────────────────────────────────────────────
+
+
+class DirectAnthropicAdapter:
+    """Direct Anthropic SDK adapter — no pydantic_ai dependency.
+
+    Uses anthropic.AsyncAnthropic. Import happens inside __init__.
     """
 
-    async def complete(
-        self,
-        system_prompt: str,
-        user_message: str,
-        tools: list[Tool] | None = None,
-        response_schema: type[BaseModel] | None = None,
-        temperature: float = 0.1,
-        max_tokens: int = 4096,
-    ) -> LLMResponse:
-        """Generate a completion.
+    def __init__(self) -> None:
+        import anthropic
 
-        Args:
-            system_prompt: System prompt for the conversation.
-            user_message: User's message.
-            tools: Available tools the LLM can call.
-            response_schema: Optional Pydantic model for structured output.
-            temperature: Sampling temperature.
-            max_tokens: Maximum tokens in response.
+        settings = get_settings()
+        self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        self._settings = settings
 
-        Returns:
-            LLM response with content and optional tool calls.
-        """
-        ...
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Generate a completion using the Anthropic SDK directly."""
+        model = request.model or self._settings.anthropic_model_primary
+        max_tokens = request.max_tokens or self._settings.max_tokens_per_response
 
-    async def complete_streaming(
-        self,
-        system_prompt: str,
-        user_message: str,
-        tools: list[Tool] | None = None,
-        temperature: float = 0.1,
-        max_tokens: int = 4096,
-    ):
-        """Generate a streaming completion.
+        # Build context block
+        context_block = _build_context_block(request.context_chunks)
+        full_message = request.user_message
+        if context_block:
+            full_message = f"{context_block}\n\n{request.user_message}"
 
-        Yields:
-            Partial response tokens.
-        """
-        ...
-        yield ""  # Make this an async generator
+        logger.info("direct_anthropic_complete", model=model)
+
+        response = await self._client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=request.temperature,
+            system=request.system_prompt,
+            messages=[{"role": "user", "content": full_message}],
+        )
+
+        content = response.content[0].text if response.content else ""
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+        cost = estimate_cost(model, input_tokens, output_tokens)
+
+        return LLMResponse(
+            content=content,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            raw=response.model_dump_json(),
+        )
+
+    def system_prompt_hash(self, prompt: str) -> str:
+        return compute_prompt_hash(prompt)
+
+
+# ─── Pydantic AI Adapter ─────────────────────────────────────────────────────
+
+
+class PydanticAIAdapter:
+    """Pydantic AI adapter.
+
+    Imports pydantic_ai inside __init__ ONLY.
+    Import at module level is FORBIDDEN.
+    """
+
+    def __init__(self) -> None:
+        from pydantic_ai import Agent
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        settings = get_settings()
+        self._primary_model = AnthropicModel(settings.anthropic_model_primary)
+        self._secondary_model = AnthropicModel(settings.anthropic_model_secondary)
+        self._settings = settings
+        self._Agent = Agent
+        self._AnthropicModel = AnthropicModel
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Generate a completion using Pydantic AI."""
+        model_name = request.model or self._settings.anthropic_model_primary
+        model = self._AnthropicModel(model_name)
+        max_tokens = request.max_tokens or self._settings.max_tokens_per_response
+
+        context_block = _build_context_block(request.context_chunks)
+        full_message = request.user_message
+        if context_block:
+            full_message = f"{context_block}\n\n{request.user_message}"
+
+        logger.info("pydantic_ai_complete", model=model_name)
+
+        agent = self._Agent(
+            model=model,
+            system_prompt=request.system_prompt,
+        )
+
+        result = await agent.run(full_message)
+
+        content = str(result.data) if hasattr(result, "data") else str(result)
+        usage = result.usage() if hasattr(result, "usage") else None
+        input_tokens = usage.request_tokens if usage else 0
+        output_tokens = usage.response_tokens if usage else 0
+        cost = estimate_cost(model_name, input_tokens, output_tokens)
+
+        return LLMResponse(
+            content=content,
+            model=model_name,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            raw=str(result),
+        )
+
+    def system_prompt_hash(self, prompt: str) -> str:
+        return compute_prompt_hash(prompt)
+
+
+# ─── Factory ─────────────────────────────────────────────────────────────────
+
+
+def get_llm_client(adapter: str = "pydantic_ai") -> LLMClient:
+    """Get an LLM client implementation.
+
+    Args:
+        adapter: "direct" → DirectAnthropicAdapter, else → PydanticAIAdapter
+    """
+    if adapter == "direct":
+        return DirectAnthropicAdapter()
+    return PydanticAIAdapter()

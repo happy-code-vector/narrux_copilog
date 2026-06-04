@@ -1,151 +1,198 @@
-"""Output validator — cross-checks agent claims against KB facts.
+"""Output validator — function-specific validation of agent responses.
 
-When the agent claims "F19 is Class B, baseline 16, range 12-20",
-this validator checks that against param_classification.yaml before rendering.
-
-NO framework imports. Pure Python + Pydantic.
+NO pydantic_ai imports. Pure Python + Pydantic.
 """
 
 import re
 import structlog
-from dataclasses import dataclass
 
-from retrieval.vector_store import SearchResult
+from tools.schemas import AgentResponse, ConfidenceLevel, FunctionID
 
 logger = structlog.get_logger(__name__)
 
+# Class C component names for the check_class_c_flagged validator
+CLASS_C_COMPONENTS = [
+    "cvd",
+    "cumulative volume delta",
+    "cmf",
+    "chaikin money flow",
+    "mfi",
+    "money flow index",
+    "volume exhaustion",
+    "spike exit",
+    "momentum override",
+]
 
-@dataclass
-class ValidationResult:
-    """Result of output validation."""
 
-    is_valid: bool
-    mismatches: list[str]
-    warnings: list[str]
+def validate_response(response: AgentResponse) -> AgentResponse:
+    """Run function-specific validators based on response.function_id.
 
+    F-03 → validate_tsi_output
+    F-04 → validate_recommendations
+    F-02 → validate_backtest_response
+    F-05 → validate_drift_response
+    All → check_class_c_flagged
 
-class OutputValidator:
-    """Validates agent output against known facts in the KB.
-
-    Checks:
-    - Parameter class claims (A/B/C) match KB
-    - Baseline values match KB
-    - Range values match KB
-    - Filter behavior claims match KB
+    If any validator fails AND confidence==HIGH → downgrade to MEDIUM.
     """
+    issues: list[str] = []
 
-    def validate_parameter_claim(
-        self,
-        parameter_name: str,
-        claimed_class: str,
-        claimed_baseline: float | None,
-        claimed_range: tuple[float, float] | None,
-        kb_results: list[SearchResult],
-    ) -> ValidationResult:
-        """Validate a parameter claim against KB.
+    if response.function_id == FunctionID.F03:
+        issues.extend(validate_tsi_output(response).get("issues", []))
+    elif response.function_id == FunctionID.F04:
+        issues.extend(validate_recommendations(response).get("issues", []))
+    elif response.function_id == FunctionID.F02:
+        issues.extend(validate_backtest_response(response).get("issues", []))
+    elif response.function_id == FunctionID.F05:
+        issues.extend(validate_drift_response(response).get("issues", []))
 
-        Args:
-            parameter_name: Name of the parameter.
-            claimed_class: Claimed class (A, B, or C).
-            claimed_baseline: Claimed baseline value.
-            claimed_range: Claimed (min, max) range.
-            kb_results: Search results from KB for this parameter.
+    # All responses: check Class C flagged
+    issues.extend(check_class_c_flagged(response).get("issues", []))
 
-        Returns:
-            Validation result with mismatches.
-        """
-        mismatches = []
-        warnings = []
-
-        if not kb_results:
-            warnings.append(f"No KB data found for parameter '{parameter_name}'")
-            return ValidationResult(is_valid=True, mismatches=[], warnings=warnings)
-
-        # Extract KB data from top result
-        kb = kb_results[0]
-        kb_content = kb.content.lower()
-
-        # Check class claim
-        class_pattern = re.compile(r'class\s+([abc])', re.IGNORECASE)
-        class_match = class_pattern.search(kb_content)
-        if class_match:
-            kb_class = class_match.group(1).upper()
-            if claimed_class.upper() != kb_class:
-                mismatches.append(
-                    f"Parameter class mismatch: claimed '{claimed_class}', "
-                    f"KB says '{kb_class}'"
-                )
-
-        # Check baseline claim
-        if claimed_baseline is not None:
-            baseline_pattern = re.compile(r'baseline\s*(?:is|of|=|:)\s*(\d+\.?\d*)')
-            baseline_match = baseline_pattern.search(kb_content)
-            if baseline_match:
-                kb_baseline = float(baseline_match.group(1))
-                if abs(claimed_baseline - kb_baseline) > 0.01:
-                    mismatches.append(
-                        f"Baseline mismatch: claimed {claimed_baseline}, "
-                        f"KB says {kb_baseline}"
-                    )
-
-        # Check range claim
-        if claimed_range is not None:
-            range_pattern = re.compile(r'range\s*(?:is|of|=|:)?\s*(\d+\.?\d*)\s*[-–]\s*(\d+\.?\d*)')
-            range_match = range_pattern.search(kb_content)
-            if range_match:
-                kb_min = float(range_match.group(1))
-                kb_max = float(range_match.group(2))
-                if abs(claimed_range[0] - kb_min) > 0.01 or abs(claimed_range[1] - kb_max) > 0.01:
-                    mismatches.append(
-                        f"Range mismatch: claimed {claimed_range}, "
-                        f"KB says ({kb_min}, {kb_max})"
-                    )
-
-        is_valid = len(mismatches) == 0
-
-        if not is_valid:
-            logger.warning(
-                "validation_failed",
-                parameter=parameter_name,
-                mismatches=mismatches,
-            )
-
-        return ValidationResult(
-            is_valid=is_valid,
-            mismatches=mismatches,
-            warnings=warnings,
+    if issues and response.confidence == ConfidenceLevel.high:
+        logger.warning("validation_downgrading", issues=issues)
+        response = response.model_copy(
+            update={
+                "confidence": ConfidenceLevel.medium,
+                "validator_results": {
+                    **(response.validator_results or {}),
+                    "output_validator": {"issues": issues},
+                },
+            }
         )
 
-    def validate_filter_claim(
-        self,
-        filter_id: str,
-        claimed_behavior: str,
-        kb_results: list[SearchResult],
-    ) -> ValidationResult:
-        """Validate a filter behavior claim against KB.
+    return response
 
-        Args:
-            filter_id: Filter identifier (e.g., "F19").
-            claimed_behavior: Description of filter behavior.
-            kb_results: Search results from KB for this filter.
 
-        Returns:
-            Validation result.
-        """
-        mismatches = []
-        warnings = []
+def validate_tsi_output(response: AgentResponse) -> dict:
+    """Validate TSI (F-03) output.
 
-        if not kb_results:
-            warnings.append(f"No KB data found for filter '{filter_id}'")
-            return ValidationResult(is_valid=True, mismatches=[], warnings=warnings)
+    - If not computed_from_raw_csv and no ± tolerance note → issue
+    - Check grade implies correct leverage cap
+    """
+    issues: list[str] = []
+    content = response.content.lower()
 
-        # Basic check: does the KB mention this filter?
-        kb = kb_results[0]
-        if filter_id.upper() not in kb.content.upper():
-            warnings.append(f"KB result doesn't mention {filter_id}")
+    # Check reconstruction tolerance note
+    if response.structured_output and not response.structured_output.get("computed_from_raw_csv"):
+        if "±" not in response.content and "tolerance" not in content:
+            issues.append("reconstructed_score_without_tolerance_note")
 
-        return ValidationResult(
-            is_valid=len(mismatches) == 0,
-            mismatches=mismatches,
-            warnings=warnings,
-        )
+    # Check grade → leverage cap consistency
+    grade_cap_map = {"s": 3.0, "a": 2.0, "b": 1.5, "c": 1.0, "d": 0.0}
+    for grade, expected_cap in grade_cap_map.items():
+        if f"grade {grade.upper()}" in content or f"grade: {grade.upper()}" in content:
+            cap_pattern = rf"{expected_cap}[x×]"
+            if not re.search(cap_pattern, content):
+                # Check if any cap is mentioned that doesn't match
+                cap_mentions = re.findall(r"(\d+\.?\d*)[x×]", content)
+                for cap_str in cap_mentions:
+                    cap_val = float(cap_str)
+                    if abs(cap_val - expected_cap) > 0.01:
+                        issues.append(f"grade_{grade}_cap_mismatch:{cap_val}!={expected_cap}")
+
+    return {"issues": issues}
+
+
+def validate_recommendations(response: AgentResponse) -> dict:
+    """Validate parameter recommendations (F-04).
+
+    - Class A proposal → log warning
+    - Class B with evidence_count < 3 → issue
+    - Class C without regime_label → issue
+    - within_bounds=False → issue
+    """
+    issues: list[str] = []
+
+    if not response.structured_output:
+        return {"issues": issues}
+
+    recommendations = response.structured_output.get("recommendations", [])
+    for rec in recommendations:
+        name = rec.get("parameter_name", "unknown")
+        param_class = rec.get("parameter_class")
+        evidence_count = rec.get("evidence_backtest_count", 0)
+        regime_label = rec.get("regime_label")
+        within_bounds = rec.get("within_bounds", True)
+
+        if param_class == "A":
+            logger.warning("class_a_proposal", parameter=name)
+            issues.append(f"class_a_proposal:{name}")
+
+        if param_class == "B" and evidence_count < 3:
+            issues.append(f"class_b_insufficient_evidence:{name}:{evidence_count}<3")
+
+        if param_class == "C" and not regime_label:
+            issues.append(f"class_c_missing_regime_label:{name}")
+
+        if not within_bounds:
+            issues.append(f"out_of_bounds:{name}")
+
+    return {"issues": issues}
+
+
+def validate_backtest_response(response: AgentResponse) -> dict:
+    """Validate backtest interpretation (F-02).
+
+    Check content contains required terms.
+    Check stop-loss ratio flagging.
+    """
+    issues: list[str] = []
+    content = response.content.lower()
+
+    # Required terms
+    required = [
+        (["tsi", "grade", "score"], "missing_tsi_reference"),
+        (["p&l", "pnl", "profit", "return", "net"], "missing_pnl_reference"),
+        (["capital basis", "initial capital", "returns basis"], "missing_capital_basis"),
+    ]
+
+    for terms, issue_name in required:
+        if not any(t in content for t in terms):
+            issues.append(issue_name)
+
+    # Check stop-loss ratio flagging
+    if response.structured_output:
+        sl_ratio = response.structured_output.get("stop_loss_ratio", 0)
+        if sl_ratio > 0.40:
+            if "stop.loss ratio" not in content and "sl ratio" not in content:
+                issues.append("high_sl_ratio_not_flagged")
+
+    return {"issues": issues}
+
+
+def validate_drift_response(response: AgentResponse) -> dict:
+    """Validate drift monitoring (F-05).
+
+    Check for authority role and drift status in content.
+    """
+    issues: list[str] = []
+    content = response.content.lower()
+
+    if not any(t in content for t in ["advisory", "veto", "override"]):
+        issues.append("missing_authority_role")
+
+    if not any(t in content for t in ["stable", "watch", "breach"]):
+        issues.append("missing_drift_status")
+
+    return {"issues": issues}
+
+
+def check_class_c_flagged(response: AgentResponse) -> dict:
+    """Check that Class C components are properly flagged.
+
+    If any Class C component is mentioned without regime/non-stationary warning → fail.
+    """
+    issues: list[str] = []
+    content = response.content.lower()
+
+    mentioned_components = [comp for comp in CLASS_C_COMPONENTS if comp in content]
+
+    if mentioned_components:
+        warning_terms = ["regime", "class c", "non-stationary", "regime-coupled", "volume-based"]
+        has_warning = any(t in content for t in warning_terms)
+        if not has_warning:
+            for comp in mentioned_components:
+                issues.append(f"class_c_not_flagged:{comp}")
+
+    return {"issues": issues}

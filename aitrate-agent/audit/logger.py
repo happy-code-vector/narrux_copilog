@@ -1,70 +1,80 @@
 """Audit logger — append-only log of every agent output.
 
-Uses asyncpg directly (no ORM).
+Uses structlog. NO pydantic_ai imports.
+CRITICAL: This function must raise on failure.
+The caller must not return a response if audit fails.
 """
 
-import structlog
-from uuid import UUID, uuid4
+import json
 
-import asyncpg
+import structlog
+
+from retrieval.vector_store import get_conn
+from tools.schemas import AuditEntry
 
 logger = structlog.get_logger(__name__)
 
 
-INSERT_AUDIT_SQL = """
-INSERT INTO audit_log (id, user_id, function_id, query, response, citations, tools_called, model_used, latency_ms, token_usage, metadata)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-"""
+async def write_audit_entry(entry: AuditEntry) -> None:
+    """Write an audit entry to the append-only audit_log table.
 
-
-class AuditLogger:
-    """Append-only audit log for agent outputs.
-
-    Usage:
-        audit = AuditLogger(conn)
-        await audit.log(user_id="analyst-001", function_id="F-01", ...)
+    Raises on failure — the caller must not return a response if audit fails.
     """
+    logger.info(
+        "writing_audit_entry",
+        entry_id=str(entry.entry_id),
+        response_id=str(entry.response_id),
+        function_id=entry.function_id,
+        user_id=entry.user_id,
+        duration_ms=entry.duration_ms,
+        confidence=entry.confidence if hasattr(entry, "confidence") else "unknown",
+    )
 
-    def __init__(self, conn: asyncpg.Connection):
-        self._conn = conn
+    retrieval_results_json = json.dumps(
+        [c.model_dump() for c in entry.retrieval_results]
+    )
+    rerank_scores_json = json.dumps(entry.rerank_scores)
+    parsed_response_json = entry.parsed_response.model_dump_json()
+    validator_log_json = json.dumps(entry.validator_log)
 
-    async def log(
-        self,
-        user_id: str,
-        function_id: str,
-        query: str,
-        response: str,
-        citations: dict | None = None,
-        tools_called: dict | None = None,
-        model_used: str = "unknown",
-        latency_ms: int = 0,
-        token_usage: dict | None = None,
-        metadata: dict | None = None,
-    ) -> UUID:
-        """Log an agent output to the audit trail."""
-        entry_id = uuid4()
-
-        logger.info(
-            "audit_log_entry",
-            entry_id=str(entry_id),
-            user_id=user_id,
-            function_id=function_id,
-            latency_ms=latency_ms,
+    async with get_conn() as conn:
+        await conn.execute(
+            """
+            INSERT INTO audit_log (
+                entry_id, response_id, user_id, function_id,
+                prompt_template_version, system_prompt_hash,
+                user_message, retrieval_query,
+                retrieval_results, rerank_scores,
+                llm_model, llm_input_tokens, llm_output_tokens,
+                llm_cost_usd, raw_llm_response, parsed_response,
+                validator_log, duration_ms, timestamp
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            """,
+            (
+                str(entry.entry_id),
+                str(entry.response_id),
+                entry.user_id,
+                entry.function_id,
+                entry.prompt_template_version,
+                entry.system_prompt_hash,
+                entry.user_message,
+                entry.retrieval_query,
+                retrieval_results_json,
+                rerank_scores_json,
+                entry.llm_model,
+                entry.llm_input_tokens,
+                entry.llm_output_tokens,
+                entry.llm_cost_usd,
+                entry.raw_llm_response,
+                parsed_response_json,
+                validator_log_json,
+                entry.duration_ms,
+                entry.timestamp,
+            ),
         )
+        await conn.commit()
 
-        await self._conn.execute(
-            INSERT_AUDIT_SQL,
-            entry_id,
-            user_id,
-            function_id,
-            query,
-            response,
-            citations,      # asyncpg handles dict → JSONB
-            tools_called,
-            model_used,
-            latency_ms,
-            token_usage,
-            metadata,
-        )
-
-        return entry_id
+    logger.info("audit_entry_written", entry_id=str(entry.entry_id))

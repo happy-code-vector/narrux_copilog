@@ -1,164 +1,96 @@
-"""Citation extraction and validation — enforces citations-or-silence rule.
+"""Citation verification and extraction.
 
-NO framework imports. Pure Python + Pydantic.
+NO pydantic_ai imports. Pure Python + Pydantic.
 """
 
-import re
-import structlog
-from dataclasses import dataclass
+from __future__ import annotations
 
-from retrieval.vector_store import SearchResult
+import re
+
+import structlog
+
+from tools.schemas import Citation
 
 logger = structlog.get_logger(__name__)
 
 
-@dataclass
-class Citation:
-    """A validated citation."""
+async def verify_citations(
+    citations: list[Citation],
+) -> tuple[list[Citation], list[str]]:
+    """Verify that citations point to real chunks in the KB.
 
-    handle: str  # e.g., "Master Long v14, §3.2, F19"
-    source_file: str
-    doc_id: str
-    section: str | None
-    line_number: int | None
-    relevance_score: float
+    For each citation, call get_chunk_by_id. If None → hallucinated.
+    If doc_id mismatch → failed.
 
-
-@dataclass
-class CitedClaim:
-    """A claim with its supporting citation."""
-
-    claim: str
-    citation: Citation
-
-
-class CitationEnforcer:
-    """Enforces the citations-or-silence rule.
-
-    Every factual claim in the agent's output must have a citation.
-    If no citation can be found, the claim is suppressed.
+    Returns:
+        (verified_citations, failed_citation_ids)
     """
+    from retrieval.vector_store import get_chunk_by_id
 
-    def __init__(self):
-        # Patterns that indicate factual claims requiring citations
-        self._factual_patterns = [
-            r"(?:is|are|was|were)\s+(?:a|an|the)?\s*Class\s+[ABC]",
-            r"filter\s+F\d+",
-            r"baseline\s+(?:is|of|=)\s+\d+",
-            r"range\s+(?:is|of|=)\s+[\d\-]+",
-            r"parameter\s+\w+\s+(?:is|has|set\s+to)",
-            r"(?:Master|Alpha)\s+(?:Long|Short|Unified)\s+v\d+",
-            r"BE2|RT-BE-SR|trailing stop",
-            r"TSI\s+(?:grade|score)\s+[SABCD]",
-        ]
-        self._compiled_patterns = [re.compile(p, re.IGNORECASE) for p in self._factual_patterns]
+    verified: list[Citation] = []
+    failed: list[str] = []
 
-    def extract_claims(self, text: str) -> list[str]:
-        """Extract factual claims from agent output that require citations.
-
-        Args:
-            text: Agent output text.
-
-        Returns:
-            List of claims that need citations.
-        """
-        claims = []
-        sentences = re.split(r'[.!?]+', text)
-
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-
-            # Check if sentence contains factual patterns
-            for pattern in self._compiled_patterns:
-                if pattern.search(sentence):
-                    claims.append(sentence)
-                    break
-
-        return claims
-
-    def validate_citations(
-        self,
-        text: str,
-        search_results: list[SearchResult],
-    ) -> tuple[bool, list[str]]:
-        """Validate that claims in text are supported by search results.
-
-        Args:
-            text: Agent output text.
-            search_results: Retrieved chunks that could support claims.
-
-        Returns:
-            Tuple of (is_valid, list_of_uncited_claims).
-        """
-        claims = self.extract_claims(text)
-        if not claims:
-            return True, []
-
-        uncited_claims = []
-        for claim in claims:
-            # Check if any search result supports this claim
-            is_supported = self._is_claim_supported(claim, search_results)
-            if not is_supported:
-                uncited_claims.append(claim)
-
-        is_valid = len(uncited_claims) == 0
-
-        if not is_valid:
+    for citation in citations:
+        chunk = await get_chunk_by_id(citation.chunk_id)
+        if chunk is None:
+            logger.warning("hallucinated_citation", chunk_id=citation.chunk_id)
+            failed.append(citation.chunk_id)
+            continue
+        if chunk.doc_id != citation.doc_id:
             logger.warning(
-                "citations_missing",
-                total_claims=len(claims),
-                uncited=len(uncited_claims),
+                "citation_doc_id_mismatch",
+                chunk_id=citation.chunk_id,
+                expected=citation.doc_id,
+                actual=chunk.doc_id,
             )
+            failed.append(citation.chunk_id)
+            continue
+        verified.append(citation)
 
-        return is_valid, uncited_claims
+    return verified, failed
 
-    def _is_claim_supported(
-        self,
-        claim: str,
-        search_results: list[SearchResult],
-    ) -> bool:
-        """Check if a claim is supported by any search result.
 
-        Uses keyword overlap as a simple heuristic.
-        Could be enhanced with semantic similarity.
-        """
-        claim_words = set(claim.lower().split())
+def extract_citation_handles_from_text(text: str) -> list[str]:
+    """Extract citation references from agent output text.
 
-        for result in search_results:
-            result_words = set(result.content.lower().split())
-            overlap = claim_words & result_words
+    Finds bracketed references like [Alpha Handbook §D1 — CVD Filter]
+    or [file.pine:L437].
+    """
+    pattern = r"[\[\(]([^\]\)]+§[^\]\)]+|[^\]\)]+\.pine:L\d+)[\]\)]"
+    return re.findall(pattern, text)
 
-            # If >30% of claim words appear in the result, consider it supported
-            if len(overlap) / len(claim_words) > 0.3:
-                return True
 
+def citations_cover_claims(response_text: str, citations: list[Citation]) -> bool:
+    """Check whether citations cover the substantive claims in the response.
+
+    Returns True if coverage is adequate (or if the agent is abstaining).
+    Returns False if there are claims without citations.
+    """
+    # Abstain patterns — silence is correct
+    abstain_patterns = [
+        r"I don.t have",
+        r"I cannot find",
+        r"no citation",
+        r"not in my knowledge base",
+    ]
+    for pattern in abstain_patterns:
+        if re.search(pattern, response_text, re.IGNORECASE):
+            return True
+
+    # Patterns that indicate substantive claims requiring citation
+    claim_patterns = [
+        r"\bF\d{1,2}\b",  # filter references
+        r"\bClass [ABC]\b",
+        r"\bTSI\b.{0,20}\b\d+\.?\d*\b",
+        r"\bdefault\b.{0,30}\b[\d.]+\b",
+        r"\b(blocks?|requires?|fires?|activates?)\b",
+        r"\b(Bollinger|Supertrend|MACD|RSI|CVD|ATR|ADX|MFI)\b",
+        r"\b(BE1|BE2|RT-BE|trailing stop|stop.loss)\b",
+    ]
+
+    has_claims = any(re.search(p, response_text, re.IGNORECASE) for p in claim_patterns)
+
+    if has_claims and not citations:
         return False
 
-    def format_with_citations(
-        self,
-        text: str,
-        search_results: list[SearchResult],
-    ) -> str:
-        """Format text with inline citations.
-
-        Args:
-            text: Agent output text.
-            search_results: Retrieved chunks with citation handles.
-
-        Returns:
-            Text with citations added.
-        """
-        if not search_results:
-            return text
-
-        # Add citation references at the end
-        citations = []
-        for i, result in enumerate(search_results[:5], 1):  # Top 5 citations
-            citations.append(f"[{i}] {result.citation_handle}")
-
-        if citations:
-            text += "\n\n**Sources:**\n" + "\n".join(citations)
-
-        return text
+    return True
