@@ -12,7 +12,6 @@ from tools.schemas import (
     TSIResult,
     TSIGrade,
     TradeRecord,
-    TradeSource,
 )
 
 
