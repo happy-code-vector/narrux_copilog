@@ -59,47 +59,49 @@ class TestParseWebhookAlert:
         assert alert.qty is None
 
 
+def _make_tsi_result(grade: TSIGrade, leverage_cap: float) -> TSIResult:
+    """Helper to create a minimal TSIResult for testing."""
+    return TSIResult(
+        strategy_id="test", asset="TSLA",
+        period_start=datetime.now(), period_end=datetime.now(),
+        capital_basis=100000.0,
+        components={"sharpe": 0.7, "pf": 0.9, "sortino": 0.8, "mdd": 0.7, "wr": 0.6, "freq": 0.5, "trade_size": 0.4},
+        weighted_composite=72.5,
+        stability=85.0,
+        sigma_periods=2.5,
+        trend_drop=0.0,
+        catastrophic_floor=False,
+        final_tsi=72.5,
+        grade=grade,
+        leverage_cap=leverage_cap,
+        weight_cap_pct=8.0,
+        dq_triggers=[],
+        period_metrics=[],
+        diagnostics={},
+    )
+
+
 class TestTSILeverage:
     """Test TSI grade → leverage cap mapping."""
 
     def test_tsi_leverage_cap_s(self):
-        result = TSIResult(
-            strategy_id="test", asset="TSLA",
-            period_start=datetime.now(), period_end=datetime.now(),
-            weighted_score=95.0, grade=TSIGrade.S, leverage_cap=3.0,
-        )
+        result = _make_tsi_result(TSIGrade.S, 3.0)
         assert result.leverage_cap_for_grade() == 3.0
 
     def test_tsi_leverage_cap_a(self):
-        result = TSIResult(
-            strategy_id="test", asset="TSLA",
-            period_start=datetime.now(), period_end=datetime.now(),
-            weighted_score=85.0, grade=TSIGrade.A, leverage_cap=2.0,
-        )
+        result = _make_tsi_result(TSIGrade.A, 2.0)
         assert result.leverage_cap_for_grade() == 2.0
 
     def test_tsi_leverage_cap_b(self):
-        result = TSIResult(
-            strategy_id="test", asset="TSLA",
-            period_start=datetime.now(), period_end=datetime.now(),
-            weighted_score=72.5, grade=TSIGrade.B, leverage_cap=1.5,
-        )
+        result = _make_tsi_result(TSIGrade.B, 1.5)
         assert result.leverage_cap_for_grade() == 1.5
 
     def test_tsi_leverage_cap_c(self):
-        result = TSIResult(
-            strategy_id="test", asset="TSLA",
-            period_start=datetime.now(), period_end=datetime.now(),
-            weighted_score=55.0, grade=TSIGrade.C, leverage_cap=1.0,
-        )
+        result = _make_tsi_result(TSIGrade.C, 1.0)
         assert result.leverage_cap_for_grade() == 1.0
 
     def test_tsi_leverage_cap_d(self):
-        result = TSIResult(
-            strategy_id="test", asset="TSLA",
-            period_start=datetime.now(), period_end=datetime.now(),
-            weighted_score=30.0, grade=TSIGrade.D, leverage_cap=0.0,
-        )
+        result = _make_tsi_result(TSIGrade.D, 0.0)
         assert result.leverage_cap_for_grade() == 0.0
 
 

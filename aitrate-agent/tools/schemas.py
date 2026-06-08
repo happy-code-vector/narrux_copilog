@@ -190,34 +190,71 @@ class BacktestSummary(BaseModel):
         return v
 
 
+class RawTrade(BaseModel):
+    """One row from the xlsx trade log (Type='Exit' rows only).
+
+    Used by backtest_parser.py and tsi_engine.py.
+    """
+
+    open_time: datetime
+    close_time: datetime
+    side: Literal["long", "short"]
+    net_pnl: float
+    net_pnl_pct: float  # against capital_basis — NOT TV initial_capital
+    entry_price: float | None = None
+    exit_price: float | None = None
+    exit_reason: str = ""
+    partial_count: int = 1
+
+
 # ─── TSI ─────────────────────────────────────────────────────────────────────
 
 
+class PeriodMetrics(BaseModel):
+    """Per-period metrics from TSI v2.0 CA §6. One instance per time window."""
+
+    period: str  # "12mo" | "6mo" | "3mo" | "1mo" | "7d"
+    n: int  # logical trade count (post-aggregation, not partial rows)
+    win_rate: float  # logical-trade basis
+    profit_factor: float
+    mdd_pct: float  # continuous equity model (never reset per window)
+    sharpe_ann: float  # annualised using sqrt(tpy), NOT sqrt(252)
+    sortino_ann: float
+    trades_per_day: float
+    composite: float  # 0–100 period composite score
+    insufficient_sample: bool  # True when n < 5; excluded from σ
+
+
 class TSIResult(BaseModel):
-    """TSI v2.0 CA scoring result."""
+    """TSI v2.0 CA scoring result — complete output per §1.2."""
 
     strategy_id: str
     asset: str
     period_start: datetime
     period_end: datetime
-    components: dict[str, float] = Field(default_factory=dict)
-    weighted_score: float
-    grade: TSIGrade
-    leverage_cap: float
-    dq_triggers: list[str] = Field(default_factory=list)
-    reconstruction_tolerance: float | None = None
+    capital_basis: float
+
+    # Component sub-scores (for F-03 presentation)
+    components: dict[str, float]  # {"sharpe": 0.73, "pf": 0.91, ...} — period-weighted
+    weighted_composite: float  # pre-stability score (debugging + cross-check)
+    stability: float  # 0–100
+    sigma_periods: float  # stdev across eligible period composites
+    trend_drop: float
+    catastrophic_floor: bool  # True = recent regime failure detected
+    final_tsi: float  # = weighted_composite × (0.5 + 0.5 × stability/100)
+    grade: TSIGrade  # derived from final_tsi via tier thresholds
+    leverage_cap: float  # S=3.0, A=2.0, B=1.5, C=1.0, D=0.0
+    weight_cap_pct: float | None  # S=None, A=15, B=8, C=3-6, D=0
+    dq_triggers: list[str]  # ["PF12<1.3", "Sharpe1<0", "Net1<-5%", "MDD>20%"]
+    period_metrics: list[PeriodMetrics]  # one per window, always 5 entries
+    diagnostics: dict  # cat floor source, tier floor, relief applied
     computed_from_raw_csv: bool = False
+    reconstruction_tolerance: float | None = None  # ±2–3 if not from raw CSV
 
     def leverage_cap_for_grade(self) -> float:
         """Return the correct leverage cap for the grade."""
-        caps = {
-            TSIGrade.S: 3.0,
-            TSIGrade.A: 2.0,
-            TSIGrade.B: 1.5,
-            TSIGrade.C: 1.0,
-            TSIGrade.D: 0.0,
-        }
-        return caps[self.grade]
+        caps = {"S": 3.0, "A": 2.0, "B": 1.5, "C": 1.0, "D": 0.0}
+        return caps.get(self.grade.value, 0.0)
 
 
 # ─── Recommendations ─────────────────────────────────────────────────────────

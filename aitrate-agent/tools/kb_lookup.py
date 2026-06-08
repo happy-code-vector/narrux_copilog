@@ -1,151 +1,127 @@
-"""Knowledge base lookup tools — query parameter classes, filter info, strategy specs.
+"""KB lookup tool — programmatic lookups for param class, filter info, input index.
 
-Uses asyncpg connection + VectorStore.
+NO pydantic_ai imports. Pure Python + Pydantic.
+Loaded from kb_content/parameters/module_registry.json at startup.
+For now, uses a hardcoded fallback registry until Frank delivers the YAML.
+
+These are exact-match lookups with authoritative answers — must be 100% correct,
+not 95% via LLM retrieval.
 """
+
+from __future__ import annotations
+
+import json
+from functools import lru_cache
+from pathlib import Path
 
 import structlog
 
-from retrieval.vector_store import VectorStore
-from tools.schemas import (
-    FilterInfoRequest,
-    FilterInfoResponse,
-    ParameterClass,
-    ParameterClassRequest,
-    ParameterClassResponse,
-    StrategySpecRequest,
-    StrategySpecResponse,
-)
+from tools.schemas import ParameterClass
 
 logger = structlog.get_logger(__name__)
 
-
-async def lookup_filter_info(
-    request: FilterInfoRequest,
-    vector_store: VectorStore,
-) -> FilterInfoResponse:
-    """Look up filter information from the knowledge base."""
-    logger.info("looking_up_filter", filter_id=request.filter_id, strategy=request.strategy)
-
-    query = f"Filter {request.filter_id}"
-    if request.strategy:
-        query += f" in {request.strategy}"
-    query += " — what does it do, what are its parameters, what class is it"
-
-    results = await vector_store.search(
-        query=query,
-        top_k=5,
-        filter_doc_type="filter_glossary",
-    )
-
-    if not results:
-        results = await vector_store.search(query=query, top_k=5)
-
-    if not results:
-        raise ValueError(
-            f"No information found for filter {request.filter_id}. "
-            "The filter glossary may not be ingested yet."
-        )
-
-    top = results[0]
-
-    return FilterInfoResponse(
-        filter_id=request.filter_id,
-        name=top.metadata.get("filter_name", request.filter_id),
-        description=top.content,
-        strategy=top.metadata.get("strategy", request.strategy or "Unknown"),
-        class_=top.metadata.get("class"),
-        citation=top.citation_handle,
-        source_doc=top.source_file,
-        line_number=top.line_number,
-    )
+# Hardcoded fallback — replace with module_registry.json when Frank delivers
+_FALLBACK_REGISTRY: dict[str, dict] = {
+    # Alpha filters
+    "D1": {"name": "CVD Filter", "class": "C", "default": "ON", "strategy": "alpha", "description": "Cumulative Volume Delta — regime-coupled, non-stationary"},
+    "D2": {"name": "MFI Filter", "class": "C", "default": "OFF", "strategy": "alpha", "description": "Money Flow Index — volume-based, regime-coupled"},
+    "D3": {"name": "RSI Corridor", "class": "A", "default": "ON", "strategy": "alpha", "description": "RSI corridor filter — stationary"},
+    "D7": {"name": "BB Width Filter", "class": "B", "default": "OFF", "strategy": "alpha", "description": "Bollinger Band Width — quarterly drift"},
+    "D17": {"name": "S/R Proximity", "class": "A", "default": "ON", "strategy": "alpha", "description": "Support/Resistance proximity — stationary"},
+    "F19": {"name": "Multi-day S/R", "class": "A", "default": "OFF", "strategy": "alpha", "description": "Multi-day support/resistance proximity filter"},
+    "F23": {"name": "ADX Filter", "class": "B", "default": "OFF", "strategy": "master", "description": "ADX trend strength — quarterly drift"},
+    "F24": {"name": "MACD Filter", "class": "B", "default": "OFF", "strategy": "master", "description": "MACD signal — quarterly drift"},
+    "F25": {"name": "Volume Filter", "class": "C", "default": "OFF", "strategy": "master", "description": "Volume threshold — regime-coupled"},
+    "F26": {"name": "ATR Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "ATR volatility — stationary"},
+    "F27": {"name": "Supertrend Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "Supertrend signal — stationary"},
+    "F28": {"name": "EMA Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "EMA trend — stationary"},
+    "F29": {"name": "Time Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "Time-of-day filter — stationary"},
+    "F30": {"name": "Spike Filter", "class": "C", "default": "OFF", "strategy": "master", "description": "Price spike detection — regime-coupled"},
+    # Parameters
+    "bbLength": {"class": "A", "strategy": "alpha", "index": 4},
+    "rsiLength": {"class": "A", "strategy": "alpha", "index": 5},
+    "atrLength": {"class": "A", "strategy": "alpha", "index": 6},
+    "adxThreshold": {"class": "B", "strategy": "alpha", "index": 7},
+    "cvdThreshold": {"class": "C", "strategy": "alpha", "index": 8},
+    "trailingStopPct": {"class": "B", "strategy": "alpha", "index": 9},
+    "be1Trigger": {"class": "B", "strategy": "alpha", "index": 10},
+    "be2Trigger": {"class": "B", "strategy": "alpha", "index": 11},
+}
 
 
-async def lookup_parameter_class(
-    request: ParameterClassRequest,
-    vector_store: VectorStore,
-) -> ParameterClassResponse:
-    """Look up parameter class (A/B/C) from the knowledge base."""
-    logger.info(
-        "looking_up_parameter_class",
-        parameter=request.parameter_name,
-        strategy=request.strategy,
-    )
+@lru_cache(maxsize=1)
+def _load_registry() -> dict[str, dict]:
+    """Load the module registry from JSON file, or use fallback."""
+    registry_path = Path(__file__).parent.parent / "kb_content" / "parameters" / "module_registry.json"
+    if registry_path.exists():
+        try:
+            data = json.loads(registry_path.read_text(encoding="utf-8"))
+            logger.info("loaded_module_registry", path=str(registry_path), entries=len(data))
+            return data
+        except Exception as e:
+            logger.warning("failed_to_load_registry", error=str(e))
 
-    query = f"Parameter {request.parameter_name} class A B C"
-    if request.strategy:
-        query += f" in {request.strategy}"
-
-    results = await vector_store.search(
-        query=query,
-        top_k=5,
-        filter_doc_type="parameter_class",
-    )
-
-    if not results:
-        results = await vector_store.search(query=query, top_k=5)
-
-    if not results:
-        raise ValueError(
-            f"No class information found for parameter {request.parameter_name}. "
-            "The parameter class master may not be ingested yet."
-        )
-
-    top = results[0]
-
-    class_str = top.metadata.get("class", "B")
-    try:
-        param_class = ParameterClass(class_str)
-    except ValueError:
-        param_class = ParameterClass.B
-
-    return ParameterClassResponse(
-        parameter_name=request.parameter_name,
-        class_=param_class,
-        baseline=top.metadata.get("baseline"),
-        range_min=top.metadata.get("range_min"),
-        range_max=top.metadata.get("range_max"),
-        rationale=top.content,
-        citation=top.citation_handle,
-        source_doc=top.source_file,
-    )
+    logger.info("using_fallback_registry", entries=len(_FALLBACK_REGISTRY))
+    return _FALLBACK_REGISTRY
 
 
-async def lookup_strategy_spec(
-    request: StrategySpecRequest,
-    vector_store: VectorStore,
-) -> StrategySpecResponse:
-    """Look up strategy specification from the knowledge base."""
-    logger.info("looking_up_strategy", strategy=request.strategy_name, aspect=request.aspect)
+def get_param_class(param_name: str, strategy: str = "alpha") -> ParameterClass | None:
+    """Return Class A/B/C for a named parameter. None if not in registry."""
+    registry = _load_registry()
+    key = param_name.lower()
+    for name, entry in registry.items():
+        if name.lower() == key and entry.get("strategy", "").lower() == strategy.lower():
+            cls = entry.get("class")
+            if cls:
+                return ParameterClass(cls)
+    return None
 
-    query = f"{request.strategy_name} strategy specification"
-    if request.aspect:
-        query += f" {request.aspect}"
 
-    results = await vector_store.search(
-        query=query,
-        top_k=10,
-        filter_doc_type="strategy_spec",
-    )
+def get_filter_info(filter_id: str, strategy: str = "alpha") -> dict | None:
+    """Return {class, default, description} for a filter ID (D1, F19, etc.)."""
+    registry = _load_registry()
+    key = filter_id.upper()
+    entry = registry.get(key)
+    if entry and entry.get("strategy", "").lower() == strategy.lower():
+        return entry
+    # Try without strategy filter
+    if entry:
+        return entry
+    return None
 
-    if not results:
-        results = await vector_store.search(query=query, top_k=10)
 
-    if not results:
-        raise ValueError(
-            f"No specification found for strategy {request.strategy_name}. "
-            "The strategy spec may not be ingested yet."
-        )
+def get_input_index(param_name: str, strategy: str = "alpha") -> int | None:
+    """Return the 0-based input index for a named parameter."""
+    registry = _load_registry()
+    key = param_name.lower()
+    for name, entry in registry.items():
+        if name.lower() == key and entry.get("strategy", "").lower() == strategy.lower():
+            return entry.get("index")
+    return None
 
-    combined_content = "\n\n".join(r.content for r in results[:3])
-    top = results[0]
 
-    return StrategySpecResponse(
-        strategy_name=request.strategy_name,
-        architecture=top.metadata.get("architecture", "Unknown"),
-        description=combined_content,
-        filters=top.metadata.get("filters", []),
-        exit_mechanisms=top.metadata.get("exit_mechanisms", []),
-        parameters_count=top.metadata.get("parameters_count", 0),
-        citation=top.citation_handle,
-        source_doc=top.source_file,
-    )
+def validate_param_bounds(param_name: str, value: float, strategy: str = "alpha") -> bool:
+    """Check proposed value is within allowed bounds for a parameter.
+
+    Returns True if within bounds, False otherwise.
+    Currently uses hardcoded bounds — replace with param_class_master.yaml when available.
+    """
+    # Hardcoded bounds for common parameters
+    bounds: dict[str, tuple[float, float]] = {
+        "bblength": (10, 50),
+        "rsilength": (7, 21),
+        "atrlength": (7, 21),
+        "adxthreshold": (15, 35),
+        "cvdthreshold": (50, 200),
+        "trailingstoppct": (0.5, 5.0),
+        "be1trigger": (0.5, 3.0),
+        "be2trigger": (1.0, 5.0),
+    }
+
+    key = param_name.lower()
+    if key in bounds:
+        lo, hi = bounds[key]
+        return lo <= value <= hi
+
+    # If no bounds defined, allow (pass-through)
+    return True
