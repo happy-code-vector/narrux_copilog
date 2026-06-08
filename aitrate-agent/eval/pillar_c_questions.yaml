@@ -1,0 +1,102 @@
+# Pillar C — Parameter Governance / Drift (F-04, F-05)
+# Questions about parameter recommendations and drift monitoring
+
+- id: C001
+  question: "Can I change the RSI length parameter?"
+  expected_content: ["Class A", "Set & Forget", "12 months"]
+  must_abstain: false
+
+- id: C002
+  question: "What evidence is needed to change a Class B parameter?"
+  expected_content: ["3 backtests", "quarterly drift"]
+  must_abstain: false
+
+- id: C003
+  question: "Why can't the CVD threshold be treated as stationary?"
+  expected_content: ["Class C", "regime-coupled", "non-stationary", "volume-based"]
+  must_abstain: false
+
+- id: C004
+  question: "What is the drift breach threshold?"
+  expected_content: ["0.40%", "rolling 20 trades"]
+  must_abstain: false
+
+- id: C005
+  question: "What authority role does the drift monitor exercise?"
+  expected_content: ["advisory", "risk"]
+  must_abstain: false
+
+- id: C006
+  question: "What happens when drift status is BREACH?"
+  expected_content: ["reduce position", "investigate", "regime"]
+  must_abstain: false
+
+- id: C007
+  question: "Can I adjust the ADX threshold based on one backtest?"
+  expected_content: ["Class B", "3 backtests", "no"]
+  must_abstain: false
+
+- id: C008
+  question: "What is the kill zone in the leverage framework?"
+  expected_content: ["rho >= 0.30", "tail >= 20%", "leverage 0"]
+  must_abstain: false
+
+- id: C009
+  question: "What is the portfolio stress ceiling?"
+  expected_content: ["1.50x", "family"]
+  must_abstain: false
+
+- id: C010
+  question: "Should I set bbLength to 20?"
+  expected_content: ["Class A", "evidence", "backtest"]
+  must_abstain: false
+
+- id: C011
+  question: "What is the binding constraint for Tier B leverage?"
+  expected_content: ["1.5x", "tier_cap"]
+  must_abstain: false
+
+- id: C012
+  question: "When does the drift monitor recommend reducing position size?"
+  expected_content: ["BREACH", "0.40%", "rolling"]
+  must_abstain: false
+
+- id: C013
+  question: "What is a Class C parameter?"
+  expected_content: ["volume-based", "CVD", "CMF", "MFI", "regime"]
+  must_abstain: false
+
+- id: C014
+  question: "What is the golden value for the 12-strategy family leverage?"
+  expected_content: ["1.50x"]
+  must_abstain: false
+
+- id: C015
+  question: "Can a Class A parameter be changed on single-backtest evidence?"
+  expected_content: ["no", "Class A", "institutional-grade"]
+  must_abstain: false
+
+- id: C016
+  question: "What are the three drift statuses?"
+  expected_content: ["stable", "watch", "breach"]
+  must_abstain: false
+
+- id: C017
+  question: "What does 'strong backtest ≠ forward stability' mean?"
+  expected_content: ["Class C", "regime-coupled", "non-stationary"]
+  must_abstain: false
+
+- id: C018
+  question: "What should I set the trailing stop to?"
+  expected_content: ["Class B", "governance", "evidence"]
+  must_abstain: false
+
+- id: C019
+  question: "What is the exit slippage baseline?"
+  expected_content: ["0.19%", "Bar Magnifier"]
+  must_abstain: false
+
+- id: C020
+  question: "What parameter is the CVD threshold?"
+  expected_content: ["Class C", "regime-coupled"]
+  must_abstain: false

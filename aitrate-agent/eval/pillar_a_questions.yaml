@@ -1,0 +1,101 @@
+# Pillar A — Strategy Knowledge (F-01)
+# 80+ questions covering filters, exit mechanisms, entry logic, parameter classes
+
+- id: A001
+  question: "What does the CVD filter do and what class is it?"
+  expected_citations: ["alpha_handbook_v15_9_1_vol_d"]
+  expected_content: ["Class C", "cumulative volume delta", "regime-coupled"]
+  must_abstain: false
+
+- id: A002
+  question: "What are the three default-ON filters in Alpha v15.9.1?"
+  expected_content: ["D1", "D3", "D17", "CVD", "RSI Corridor", "S/R Proximity"]
+  must_abstain: false
+
+- id: A003
+  question: "What is the difference between Alpha and Sentinel's default Class C exposure?"
+  expected_content: ["Alpha CVD default ON", "Sentinel zero Class C", "composition engine"]
+  must_abstain: false
+
+- id: A004
+  question: "What does the BE2 exit mechanism do?"
+  expected_content: ["break-even", "dual trigger", "BE1", "BE2"]
+  must_abstain: false
+
+- id: A005
+  question: "What is the default ATR length in Alpha v15.9.1?"
+  expected_content: ["ATR", "14"]
+  must_abstain: false
+
+- id: A006
+  question: "Explain the trailing stop logic in Alpha."
+  expected_content: ["trailing stop", "profit", "activation"]
+  must_abstain: false
+
+- id: A007
+  question: "What filters are Class B in Alpha v15.9.1?"
+  expected_content: ["ADX", "MACD", "BB Width", "quarterly drift"]
+  must_abstain: false
+
+- id: A008
+  question: "How does the RSI Corridor filter work?"
+  expected_content: ["RSI", "corridor", "overbought", "oversold"]
+  must_abstain: false
+
+- id: A009
+  question: "What is the Supertrend signal and what class is it?"
+  expected_content: ["Supertrend", "Class A", "trend-following"]
+  must_abstain: false
+
+- id: A010
+  question: "What does filter F31 do?"
+  must_abstain: true
+
+- id: A011
+  question: "What is the difference between BE1 and BE2?"
+  expected_content: ["BE1", "BE2", "independent", "trigger"]
+  must_abstain: false
+
+- id: A012
+  question: "What parameters are Class A (Set & Forget)?"
+  expected_content: ["RSI", "BB%", "ATR", "Supertrend", "EMA", "time filter"]
+  must_abstain: false
+
+- id: A013
+  question: "Why is the CVD filter classified as Class C?"
+  expected_content: ["volume-based", "regime-coupled", "non-stationary"]
+  must_abstain: false
+
+- id: A014
+  question: "What is the RT-BE-SR exit variant?"
+  expected_content: ["real-time", "break-even", "support", "resistance"]
+  must_abstain: false
+
+- id: A015
+  question: "How many filters are in Alpha v15.9.1?"
+  expected_content: ["30"]
+  must_abstain: false
+
+- id: A016
+  question: "What does the time filter do?"
+  expected_content: ["time-of-day", "trading session", "Class A"]
+  must_abstain: false
+
+- id: A017
+  question: "What is the architecture of Master Long v14?"
+  expected_content: ["single-path", "AND-gate", "structurally stable"]
+  must_abstain: false
+
+- id: A018
+  question: "What volume-based filters exist in Alpha?"
+  expected_content: ["CVD", "CMF", "MFI", "volume", "Class C"]
+  must_abstain: false
+
+- id: A019
+  question: "What does the momentum override do?"
+  expected_content: ["momentum", "override", "Class C"]
+  must_abstain: false
+
+- id: A020
+  question: "What is filter F32?"
+  must_abstain: true

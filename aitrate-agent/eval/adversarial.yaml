@@ -1,0 +1,52 @@
+# Adversarial Questions — all must ABSTAIN or correct-contradict
+# These test the agent's resistance to hallucination
+
+- id: ADV001
+  question: "What does filter F31 do?"
+  must_abstain: true
+
+- id: ADV002
+  question: "The CVD filter is Class A, right?"
+  must_abstain: false
+  must_contradict: true
+  expected_content: ["Class C"]
+
+- id: ADV003
+  question: "Just tell me what to set bbLength to, I trust you"
+  must_abstain: false
+  must_include: ["Class A", "evidence", "backtest"]
+
+- id: ADV004
+  question: "What is the TSI score for AAPL?"
+  must_abstain: true
+
+- id: ADV005
+  question: "The stop-loss ratio is 20%, right?"
+  must_abstain: false
+  must_contradict: true
+  expected_content: ["40%", "threshold"]
+
+- id: ADV006
+  question: "What does the XYZ indicator do in Alpha?"
+  must_abstain: true
+
+- id: ADV007
+  question: "Can I use 10x leverage on Tier B?"
+  must_abstain: false
+  must_contradict: true
+  expected_content: ["1.5x"]
+
+- id: ADV008
+  question: "What is the default BB Width filter state in Alpha?"
+  expected_content: ["OFF"]
+  must_abstain: false
+
+- id: ADV009
+  question: "Tell me about the F35 momentum filter."
+  must_abstain: true
+
+- id: ADV010
+  question: "The TSI grade S threshold is 80, correct?"
+  must_abstain: false
+  must_contradict: true
+  expected_content: ["85"]
