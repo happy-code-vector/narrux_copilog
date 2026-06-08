@@ -20,13 +20,20 @@ from tools.schemas import ParameterClass
 
 logger = structlog.get_logger(__name__)
 
-# Paths
-_PROJECT_ROOT = Path(__file__).parent.parent.parent
-_GLOSSARY_PATH = _PROJECT_ROOT / "Strategy Docs" / "narrux_filter_glossary.json"
+# Paths — prefer kb_content/ first, fall back to Strategy Docs/
+_PACKAGE_DIR = Path(__file__).parent.parent
+_PROJECT_ROOT = _PACKAGE_DIR.parent
 _STRATEGY_DOCS = _PROJECT_ROOT / "Strategy Docs"
 
-# Input index CSV locations
+_GLOSSARY_PATH = _PACKAGE_DIR / "kb_content" / "parameters" / "narrux_filter_glossary.json"
+_GLOSSARY_FALLBACK = _STRATEGY_DOCS / "narrux_filter_glossary.json"
+
+# Input index CSV locations — kb_content first, then Strategy Docs
 _INPUT_INDEX_FILES = {
+    "master": _PACKAGE_DIR / "kb_content" / "parameters" / "master_v14_3_input_index.csv",
+    "nrx": _PACKAGE_DIR / "kb_content" / "parameters" / "nrx_mtr_v1_input_index.csv",
+}
+_INPUT_INDEX_FALLBACKS = {
     "master": _STRATEGY_DOCS / "strategy explain" / "MAster" / "master_v14_3_input_index.csv",
     "nrx": _STRATEGY_DOCS / "strategy explain" / "NRX" / "nrx_mtr_v1_input_index.csv",
 }
@@ -34,13 +41,8 @@ _INPUT_INDEX_FILES = {
 
 @lru_cache(maxsize=1)
 def _load_glossary() -> dict:
-    """Load the filter glossary JSON. Returns raw dict."""
-    # Try multiple paths
-    candidates = [
-        _GLOSSARY_PATH,
-        Path(__file__).parent.parent / "kb_content" / "parameters" / "narrux_filter_glossary.json",
-    ]
-    for path in candidates:
+    """Load the filter glossary JSON. Returns raw dict. Prefers kb_content/."""
+    for path in [_GLOSSARY_PATH, _GLOSSARY_FALLBACK]:
         if path.exists():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -49,7 +51,7 @@ def _load_glossary() -> dict:
             except Exception as e:
                 logger.warning("failed_to_load_glossary", path=str(path), error=str(e))
 
-    logger.warning("filter_glossary_not_found", candidates=[str(p) for p in candidates])
+    logger.warning("filter_glossary_not_found")
     return {}
 
 
@@ -164,10 +166,14 @@ def get_param_class(param_name: str, strategy: str = "alpha") -> ParameterClass 
 
 @lru_cache(maxsize=4)
 def _load_input_index(strategy: str) -> dict[str, dict]:
-    """Load input index CSV for a strategy. Returns {param_name_lower: {index, name, type, default, group}}."""
+    """Load input index CSV for a strategy. Prefers kb_content/, falls back to Strategy Docs/."""
     csv_path = _INPUT_INDEX_FILES.get(strategy.lower())
     if not csv_path or not csv_path.exists():
-        logger.warning("input_index_not_found", strategy=strategy, path=str(csv_path))
+        # Try fallback
+        csv_path = _INPUT_INDEX_FALLBACKS.get(strategy.lower())
+
+    if not csv_path or not csv_path.exists():
+        logger.warning("input_index_not_found", strategy=strategy)
         return {}
 
     index: dict[str, dict] = {}
