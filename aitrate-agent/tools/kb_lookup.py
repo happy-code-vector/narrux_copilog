@@ -9,6 +9,7 @@ not 95% via LLM retrieval.
 
 from __future__ import annotations
 
+import csv
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -19,8 +20,16 @@ from tools.schemas import ParameterClass
 
 logger = structlog.get_logger(__name__)
 
-# Path to the authoritative filter glossary JSON
-_GLOSSARY_PATH = Path(__file__).parent.parent.parent / "Strategy Docs" / "narrux_filter_glossary.json"
+# Paths
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+_GLOSSARY_PATH = _PROJECT_ROOT / "Strategy Docs" / "narrux_filter_glossary.json"
+_STRATEGY_DOCS = _PROJECT_ROOT / "Strategy Docs"
+
+# Input index CSV locations
+_INPUT_INDEX_FILES = {
+    "master": _STRATEGY_DOCS / "strategy explain" / "MAster" / "master_v14_3_input_index.csv",
+    "nrx": _STRATEGY_DOCS / "strategy explain" / "NRX" / "nrx_mtr_v1_input_index.csv",
+}
 
 
 @lru_cache(maxsize=1)
@@ -153,15 +162,70 @@ def get_param_class(param_name: str, strategy: str = "alpha") -> ParameterClass 
     return None
 
 
-def get_input_index(param_name: str, strategy: str = "alpha") -> int | None:
+@lru_cache(maxsize=4)
+def _load_input_index(strategy: str) -> dict[str, dict]:
+    """Load input index CSV for a strategy. Returns {param_name_lower: {index, name, type, default, group}}."""
+    csv_path = _INPUT_INDEX_FILES.get(strategy.lower())
+    if not csv_path or not csv_path.exists():
+        logger.warning("input_index_not_found", strategy=strategy, path=str(csv_path))
+        return {}
+
+    index: dict[str, dict] = {}
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get("name", "").strip()
+            if not name:
+                continue
+            try:
+                idx = int(row.get("index", -1))
+            except ValueError:
+                continue
+            index[name.lower()] = {
+                "index": idx,
+                "name": name,
+                "type": row.get("type", ""),
+                "default": row.get("default", ""),
+                "group": row.get("group", ""),
+            }
+
+    logger.info("loaded_input_index", strategy=strategy, entries=len(index))
+    return index
+
+
+def get_input_index(param_name: str, strategy: str = "master") -> int | None:
     """Return the 0-based input index for a named parameter.
 
-    Returns None if not found — the input index must come from
-    the strategy's input_index CSV or the param_class_master.yaml.
+    Loads from the strategy's input_index CSV file.
+    Returns None if not found.
     """
-    # Input indices are strategy-specific and not in the glossary JSON.
-    # They come from the input_index CSV files (master_v14_3_input_index.csv, etc.)
-    # Return None until those are loaded.
+    index = _load_input_index(strategy)
+    entry = index.get(param_name.lower())
+    if entry:
+        return entry["index"]
+
+    # Try partial match (e.g., "atrPeriod" matches "atrperiod")
+    name_lower = param_name.lower()
+    for key, entry in index.items():
+        if name_lower in key or key in name_lower:
+            return entry["index"]
+
+    return None
+
+
+def get_input_info(param_name: str, strategy: str = "master") -> dict | None:
+    """Return full input info {index, name, type, default, group} for a parameter."""
+    index = _load_input_index(strategy)
+    entry = index.get(param_name.lower())
+    if entry:
+        return entry
+
+    # Try partial match
+    name_lower = param_name.lower()
+    for key, entry in index.items():
+        if name_lower in key or key in name_lower:
+            return entry
+
     return None
 
 
