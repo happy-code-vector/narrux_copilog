@@ -137,6 +137,45 @@ def extract_text_from_docx(path: Path) -> str:
     return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
 
+def extract_text_from_csv(path: Path) -> str:
+    """Extract text from a CSV file (e.g., input index files)."""
+    import csv
+
+    rows = []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            rows.append(" | ".join(row))
+    return "\n".join(rows)
+
+
+def extract_text_from_json(path: Path) -> str:
+    """Extract text from a JSON file (e.g., filter glossary)."""
+    import json
+
+    data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    if isinstance(data, list):
+        # Array of objects — flatten each to key: value lines
+        parts = []
+        for item in data:
+            if isinstance(item, dict):
+                lines = [f"{k}: {v}" for k, v in item.items() if v]
+                parts.append("\n".join(lines))
+            else:
+                parts.append(str(item))
+        return "\n\n".join(parts)
+    elif isinstance(data, dict):
+        # Object — flatten to key: value lines
+        lines = []
+        for k, v in data.items():
+            if isinstance(v, (list, dict)):
+                lines.append(f"{k}: {json.dumps(v)}")
+            else:
+                lines.append(f"{k}: {v}")
+        return "\n".join(lines)
+    return str(data)
+
+
 # ─── Chunking ────────────────────────────────────────────────────────────────
 
 
@@ -315,6 +354,10 @@ async def ingest_document(source: IngestionSource, force_reingest: bool = False)
             text = extract_text_from_txt(path)
         elif suffix == ".docx":
             text = extract_text_from_docx(path)
+        elif suffix == ".csv":
+            text = extract_text_from_csv(path)
+        elif suffix == ".json":
+            text = extract_text_from_json(path)
         else:
             text = path.read_text(encoding="utf-8", errors="replace")
         pages = [(1, text)]
@@ -419,79 +462,131 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
     project_dir = kb_dir.parent / "project_docs"
     sources: list[IngestionSource] = []
 
-    # Project documents (ZIP archives with .pdf extensions)
-    project_docs = [
-        ("aitrate_agent_spec_v1_0", "1.0", "aiTrate AI Agent Functional Spec v1.0", DocumentScope.governance, "aiTrate_AI_Agent_Functional_Spec_v1_0.pdf"),
-        ("alpha_handbook_v15_9_1_vol_ab", "15.9.1", "NARRUX Alpha v15.9.1 Handbook Vol A-B", DocumentScope.strategy, "NARRUX_Alpha_v15_9_1_Handbook_Vol_AB.pdf", "alpha", "AB"),
-        ("alpha_handbook_v15_9_1_vol_c", "15.9.1", "NARRUX Alpha v15.9.1 Handbook Vol C", DocumentScope.strategy, "NARRUX_Alpha_v15_9_1_Handbook_Vol_C.pdf", "alpha", "C"),
-        ("alpha_handbook_v15_9_1_vol_d", "15.9.1", "NARRUX Alpha v15.9.1 Handbook Vol D", DocumentScope.strategy, "NARRUX_Alpha_v15_9_1_Handbook_Vol_D.pdf", "alpha", "D"),
-        ("alpha_handbook_v15_9_1_vol_ef", "15.9.1", "NARRUX Alpha v15.9.1 Handbook Vol E-F", DocumentScope.strategy, "NARRUX_Alpha_v15_9_1_Handbook_Vol_EF.pdf", "alpha", "EF"),
-        ("alpha_handbook_v15_9_1_vol_hl", "15.9.1", "NARRUX Alpha v15.9.1 Handbook Vol H-L", DocumentScope.strategy, "NARRUX_Alpha_v15_9_1_Handbook_Vol_HL.pdf", "alpha", "HL"),
-        ("sentinel_handbook_v1_9", "1.9", "NARRUX Sentinel v1.9 Handbook", DocumentScope.strategy, "NARRUX_Sentinel_v1_9_Handbook.pdf", "sentinel", None),
-        ("backtest_analysis_approach_v1_0", "1.0", "NARRUX Backtest Analysis Approach v1.0", DocumentScope.process, "NARRUX_Backtest_Analysis_Approach_v1_0.pdf"),
-        ("copilot_report_template_v1_0", "1.0", "NARRUX CoPilot Report Template v1.0", DocumentScope.process, "NARRUX_CoPilot_Report_Template_v1_0.pdf"),
+    # ─── Alpha handbooks (ZIP archives with .pdf extensions) ──────────────────
+    alpha_dir = project_dir / "Alpha v15.9.1"
+    alpha_handbooks = [
+        ("alpha_handbook_v15_9_1_vol_ab", "15.9.1", "Alpha Handbook Vol A-B", "NARRUX_Alpha_v15.9.1_Handbook_Vol_A-B.pdf", "alpha", "AB"),
+        ("alpha_handbook_v15_9_1_vol_c", "15.9.1", "Alpha Handbook Vol C", "NARRUX_Alpha_v15.9.1_Handbook_Vol_C.pdf", "alpha", "C"),
+        ("alpha_handbook_v15_9_1_vol_d", "15.9.1", "Alpha Handbook Vol D", "NARRUX_Alpha_v15.9.1_Handbook_Vol_D.pdf", "alpha", "D"),
+        ("alpha_handbook_v15_9_1_vol_ef", "15.9.1", "Alpha Handbook Vol E-F", "NARRUX_Alpha_v15.9.1_Handbook_Vol_E-F.pdf", "alpha", "EF"),
+        ("alpha_handbook_v15_9_1_vol_hl", "15.9.1", "Alpha Handbook Vol H-L", "NARRUX_Alpha_v15.9.1_Handbook_Vol_H-L.pdf", "alpha", "HL"),
     ]
+    for doc_id, ver, title, filename, strategy, volume in alpha_handbooks:
+        sources.append(IngestionSource(
+            path=alpha_dir / filename, doc_id=doc_id, doc_version=ver,
+            title=title, scope=DocumentScope.strategy, strategy=strategy, volume=volume,
+        ))
 
     # NOTE: Do NOT register NARRUX_Alpha_v15_9_1_fulldepth_sample.pdf —
     # its content is already in vol_ef.
 
-    for doc in project_docs:
-        doc_id, version, title, scope = doc[0], doc[1], doc[2], doc[3]
-        filename = doc[4]
-        strategy = doc[5] if len(doc) > 5 else None
-        volume = doc[6] if len(doc) > 6 else None
+    # ─── Sentinel handbook ────────────────────────────────────────────────────
+    sentinel_dir = project_dir / "Sentinel v1.9"
+    sources.append(IngestionSource(
+        path=sentinel_dir / "NARRUX_Sentinel_v1.9_Handbook.pdf",
+        doc_id="sentinel_handbook_v1_9", doc_version="1.9",
+        title="NARRUX Sentinel v1.9 Handbook", scope=DocumentScope.strategy,
+        strategy="sentinel",
+    ))
 
-        sources.append(
-            IngestionSource(
-                path=project_dir / filename,
-                doc_id=doc_id,
-                doc_version=version,
-                title=title,
-                scope=scope,
-                strategy=strategy,
-                volume=volume,
-            )
-        )
+    # ─── Master handbook ──────────────────────────────────────────────────────
+    master_dir = project_dir / "MAster"
+    sources.append(IngestionSource(
+        path=master_dir / "NARRUX_Master_v14.3_Handbook.docx",
+        doc_id="master_handbook_v14_3", doc_version="14.3",
+        title="NARRUX Master v14.3 Handbook", scope=DocumentScope.strategy,
+        strategy="master",
+    ))
+    sources.append(IngestionSource(
+        path=master_dir / "master_v14_3_input_index.csv",
+        doc_id="master_v14_3_input_index", doc_version="1.0",
+        title="Master v14.3 Input Index", scope=DocumentScope.strategy,
+        strategy="master",
+    ))
 
-    # KB content — filter glossary
+    # ─── NRX handbook ─────────────────────────────────────────────────────────
+    nrx_dir = project_dir / "NRX"
+    sources.append(IngestionSource(
+        path=nrx_dir / "NARRUX_NRX_MTrv1_Handbook.docx",
+        doc_id="nrx_mtr_v1_handbook", doc_version="1.0",
+        title="NARRUX NRX MTrv1 Handbook", scope=DocumentScope.strategy,
+        strategy="nrx",
+    ))
+    sources.append(IngestionSource(
+        path=nrx_dir / "nrx_mtr_v1_input_index.csv",
+        doc_id="nrx_mtr_v1_input_index", doc_version="1.0",
+        title="NRX MTrv1 Input Index", scope=DocumentScope.strategy,
+        strategy="nrx",
+    ))
+
+    # ─── Governance & process documents (root of project_docs) ────────────────
+    governance_docs = [
+        ("backtest_analysis_approach_v1_0", "1.0", "NARRUX Backtest Analysis Approach v1.0",
+         "NARRUX_Backtest_Analysis_Approach_v1_0.pdf", DocumentScope.process),
+        ("copilot_report_template_v1_0", "1.0", "NARRUX CoPilot Report Template v1.0",
+         "NARRUX_CoPilot_Report_Template_v1_0.pdf", DocumentScope.report_template),
+        ("kb_routing_and_guardrails_v1_0", "1.0", "NARRUX KB Routing and Guardrails v1.0",
+         "NARRUX_CoPilot_KB_Routing_and_Guardrails_v1.0.docx", DocumentScope.governance),
+        ("drift_monitor_f05_spec_v1_0", "1.0", "NARRUX Drift Monitor F05 Spec v1.0",
+         "NARRUX_Drift_Monitor_F05_Spec_v1.0.docx", DocumentScope.governance),
+        ("edgecase_playbook_v1_0", "1.0", "NARRUX EdgeCase Playbook v1.0",
+         "NARRUX_EdgeCase_Playbook_v1.0.docx", DocumentScope.playbook),
+        ("filter_glossary_and_param_classes_v1_1", "1.1", "NARRUX Filter Glossary and Param Classes v1.1",
+         "NARRUX_Filter_Glossary_and_Param_Classes_v1.1.docx", DocumentScope.filter_glossary),
+        ("leverage_framework_v1_0", "1.0", "NARRUX Leverage Framework v1.0",
+         "NARRUX_Leverage_Framework_v1.0.docx", DocumentScope.governance),
+        ("strategy_comparison_matrix_v1_0", "1.0", "NARRUX Strategy Comparison Matrix v1.0",
+         "NARRUX_Strategy_Comparison_Matrix_v1.0.docx", DocumentScope.strategy),
+        ("metric_definitions_v1_0", "1.0", "NARRUX Metric Definitions v1.0",
+         "NARRUX_Metric_Definitions_v1.0.docx", DocumentScope.governance),
+        ("input_index_appendix", "1.0", "NARRUX Input Index Appendix",
+         "NARRUX_Input_Index_Appendix.docx", DocumentScope.strategy),
+        ("filter_glossary_json", "1.0", "NARRUX Filter Glossary (JSON)",
+         "narrux_filter_glossary.json", DocumentScope.filter_glossary),
+    ]
+    for doc_id, ver, title, filename, scope in governance_docs:
+        sources.append(IngestionSource(
+            path=project_dir / filename, doc_id=doc_id, doc_version=ver,
+            title=title, scope=scope,
+        ))
+
+    # ─── Functional spec (at project root, not in project_docs) ───────────────
+    spec_path = kb_dir.parent.parent / "aiTrate_AI_Agent_Functional_Spec_v1.0.pdf"
+    if spec_path.exists():
+        sources.append(IngestionSource(
+            path=spec_path,
+            doc_id="aitrate_agent_spec_v1_0", doc_version="1.0",
+            title="aiTrate AI Agent Functional Spec v1.0", scope=DocumentScope.governance,
+        ))
+
+    # ─── KB content — filter glossary ─────────────────────────────────────────
     filters_dir = kb_dir / "filters"
     if filters_dir.exists():
         for md_file in sorted(filters_dir.glob("*.md")):
-            sources.append(
-                IngestionSource(
-                    path=md_file,
-                    doc_id=f"filter_glossary_{md_file.stem}",
-                    doc_version="1.0",
-                    title=f"Filter Glossary: {md_file.stem}",
-                    scope=DocumentScope.filter_glossary,
-                )
-            )
+            sources.append(IngestionSource(
+                path=md_file,
+                doc_id=f"filter_glossary_{md_file.stem}", doc_version="1.0",
+                title=f"Filter Glossary: {md_file.stem}",
+                scope=DocumentScope.filter_glossary,
+            ))
 
-    # KB content — parameter master
+    # ─── KB content — parameter master ────────────────────────────────────────
     param_file = kb_dir / "parameters" / "param_class_master.yaml"
     if param_file.exists():
-        sources.append(
-            IngestionSource(
-                path=param_file,
-                doc_id="param_class_master",
-                doc_version="1.0",
-                title="Parameter Class Master",
-                scope=DocumentScope.parameter_master,
-            )
-        )
+        sources.append(IngestionSource(
+            path=param_file,
+            doc_id="param_class_master", doc_version="1.0",
+            title="Parameter Class Master", scope=DocumentScope.parameter_master,
+        ))
 
-    # KB content — playbook
+    # ─── KB content — playbook ────────────────────────────────────────────────
     playbook_dir = kb_dir / "playbook"
     if playbook_dir.exists():
         for md_file in sorted(playbook_dir.glob("*.md")):
-            sources.append(
-                IngestionSource(
-                    path=md_file,
-                    doc_id=f"playbook_{md_file.stem}",
-                    doc_version="1.0",
-                    title=f"Playbook: {md_file.stem}",
-                    scope=DocumentScope.playbook,
-                )
-            )
+            sources.append(IngestionSource(
+                path=md_file,
+                doc_id=f"playbook_{md_file.stem}", doc_version="1.0",
+                title=f"Playbook: {md_file.stem}", scope=DocumentScope.playbook,
+            ))
 
     return sources
