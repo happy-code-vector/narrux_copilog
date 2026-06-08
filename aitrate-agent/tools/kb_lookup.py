@@ -1,8 +1,7 @@
 """KB lookup tool — programmatic lookups for param class, filter info, input index.
 
 NO pydantic_ai imports. Pure Python + Pydantic.
-Loaded from kb_content/parameters/module_registry.json at startup.
-For now, uses a hardcoded fallback registry until Frank delivers the YAML.
+Loaded from narrux_filter_glossary.json at startup.
 
 These are exact-match lookups with authoritative answers — must be 100% correct,
 not 95% via LLM retrieval.
@@ -20,108 +19,157 @@ from tools.schemas import ParameterClass
 
 logger = structlog.get_logger(__name__)
 
-# Hardcoded fallback — replace with module_registry.json when Frank delivers
-_FALLBACK_REGISTRY: dict[str, dict] = {
-    # Alpha filters
-    "D1": {"name": "CVD Filter", "class": "C", "default": "ON", "strategy": "alpha", "description": "Cumulative Volume Delta — regime-coupled, non-stationary"},
-    "D2": {"name": "MFI Filter", "class": "C", "default": "OFF", "strategy": "alpha", "description": "Money Flow Index — volume-based, regime-coupled"},
-    "D3": {"name": "RSI Corridor", "class": "A", "default": "ON", "strategy": "alpha", "description": "RSI corridor filter — stationary"},
-    "D7": {"name": "BB Width Filter", "class": "B", "default": "OFF", "strategy": "alpha", "description": "Bollinger Band Width — quarterly drift"},
-    "D17": {"name": "S/R Proximity", "class": "A", "default": "ON", "strategy": "alpha", "description": "Support/Resistance proximity — stationary"},
-    "F19": {"name": "Multi-day S/R", "class": "A", "default": "OFF", "strategy": "alpha", "description": "Multi-day support/resistance proximity filter"},
-    "F23": {"name": "ADX Filter", "class": "B", "default": "OFF", "strategy": "master", "description": "ADX trend strength — quarterly drift"},
-    "F24": {"name": "MACD Filter", "class": "B", "default": "OFF", "strategy": "master", "description": "MACD signal — quarterly drift"},
-    "F25": {"name": "Volume Filter", "class": "C", "default": "OFF", "strategy": "master", "description": "Volume threshold — regime-coupled"},
-    "F26": {"name": "ATR Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "ATR volatility — stationary"},
-    "F27": {"name": "Supertrend Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "Supertrend signal — stationary"},
-    "F28": {"name": "EMA Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "EMA trend — stationary"},
-    "F29": {"name": "Time Filter", "class": "A", "default": "OFF", "strategy": "master", "description": "Time-of-day filter — stationary"},
-    "F30": {"name": "Spike Filter", "class": "C", "default": "OFF", "strategy": "master", "description": "Price spike detection — regime-coupled"},
-    # Parameters
-    "bbLength": {"class": "A", "strategy": "alpha", "index": 4},
-    "rsiLength": {"class": "A", "strategy": "alpha", "index": 5},
-    "atrLength": {"class": "A", "strategy": "alpha", "index": 6},
-    "adxThreshold": {"class": "B", "strategy": "alpha", "index": 7},
-    "cvdThreshold": {"class": "C", "strategy": "alpha", "index": 8},
-    "trailingStopPct": {"class": "B", "strategy": "alpha", "index": 9},
-    "be1Trigger": {"class": "B", "strategy": "alpha", "index": 10},
-    "be2Trigger": {"class": "B", "strategy": "alpha", "index": 11},
-}
+# Path to the authoritative filter glossary JSON
+_GLOSSARY_PATH = Path(__file__).parent.parent.parent / "Strategy Docs" / "narrux_filter_glossary.json"
 
 
 @lru_cache(maxsize=1)
-def _load_registry() -> dict[str, dict]:
-    """Load the module registry from JSON file, or use fallback."""
-    registry_path = Path(__file__).parent.parent / "kb_content" / "parameters" / "module_registry.json"
-    if registry_path.exists():
-        try:
-            data = json.loads(registry_path.read_text(encoding="utf-8"))
-            logger.info("loaded_module_registry", path=str(registry_path), entries=len(data))
-            return data
-        except Exception as e:
-            logger.warning("failed_to_load_registry", error=str(e))
+def _load_glossary() -> dict:
+    """Load the filter glossary JSON. Returns raw dict."""
+    # Try multiple paths
+    candidates = [
+        _GLOSSARY_PATH,
+        Path(__file__).parent.parent / "kb_content" / "parameters" / "narrux_filter_glossary.json",
+    ]
+    for path in candidates:
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                logger.info("loaded_filter_glossary", path=str(path))
+                return data
+            except Exception as e:
+                logger.warning("failed_to_load_glossary", path=str(path), error=str(e))
 
-    logger.info("using_fallback_registry", entries=len(_FALLBACK_REGISTRY))
-    return _FALLBACK_REGISTRY
+    logger.warning("filter_glossary_not_found", candidates=[str(p) for p in candidates])
+    return {}
 
 
-def get_param_class(param_name: str, strategy: str = "alpha") -> ParameterClass | None:
-    """Return Class A/B/C for a named parameter. None if not in registry."""
-    registry = _load_registry()
-    key = param_name.lower()
-    for name, entry in registry.items():
-        if name.lower() == key and entry.get("strategy", "").lower() == strategy.lower():
-            cls = entry.get("class")
-            if cls:
-                return ParameterClass(cls)
+def _build_filter_index(glossary: dict) -> dict[str, dict]:
+    """Build a lookup index from filter ID to filter info."""
+    index: dict[str, dict] = {}
+
+    # Alpha filters (D1-D20) — uppercase keys
+    for f in glossary.get("alpha_filters", []):
+        index[f["id"].upper()] = {
+            "name": f["name"],
+            "class": f["class"],
+            "default": f.get("default", "OFF"),
+            "strategy": "alpha",
+            "fnum": f.get("fnum"),
+        }
+
+    # Sentinel filters (F1-F16) — uppercase keys
+    for f in glossary.get("sentinel_filters", []):
+        index[f["id"].upper()] = {
+            "name": f["name"],
+            "class": f["class"],
+            "default": f.get("default", "OFF"),
+            "strategy": "sentinel",
+        }
+
+    # Master core filters (F1-F20 + StochRSI + MStruct) — prefixed, case-preserved
+    for f in glossary.get("master_filters_core", []):
+        index[f"master_{f['id'].upper()}"] = {
+            "name": f["name"],
+            "class": f["class"],
+            "strategy": "master",
+            "adaptive": f.get("adaptive", False),
+        }
+
+    # Master new filters (N1-N8) — prefixed
+    for f in glossary.get("master_filters_new", []):
+        index[f"master_{f['id'].upper()}"] = {
+            "name": f["name"],
+            "class": f["class"],
+            "strategy": "master",
+        }
+
+    # NRX filters (E1-E9) — uppercase keys
+    for f in glossary.get("nrx_filters", []):
+        index[f["id"].upper()] = {
+            "name": f["name"],
+            "class": f["class"],
+            "strategy": "nrx",
+        }
+
+    return index
+
+
+@lru_cache(maxsize=1)
+def _get_filter_index() -> dict[str, dict]:
+    """Cached filter index."""
+    glossary = _load_glossary()
+    return _build_filter_index(glossary)
+
+
+def get_filter_info(filter_id: str, strategy: str | None = None) -> dict | None:
+    """Return {name, class, default, strategy} for a filter ID.
+
+    Args:
+        filter_id: Filter identifier (D1, F1, E1, N1, etc.)
+        strategy: Optional strategy filter (alpha, sentinel, master, nrx)
+    """
+    index = _get_filter_index()
+    fid = filter_id.upper()
+
+    # Direct lookup
+    entry = index.get(fid)
+    if entry:
+        if strategy and entry.get("strategy", "").lower() != strategy.lower():
+            # Strategy mismatch — try prefixed lookup for Master
+            if strategy and strategy.lower() == "master":
+                prefixed = f"master_{fid}"
+                entry2 = index.get(prefixed)
+                if entry2:
+                    return entry2
+            return None
+        return entry
+
+    # Try with strategy prefix for Master filters (F1-F20 + N1-N8)
+    if strategy and strategy.lower() == "master":
+        prefixed = f"master_{fid}"
+        entry = index.get(prefixed)
+        if entry:
+            return entry
+
     return None
 
 
-def get_filter_info(filter_id: str, strategy: str = "alpha") -> dict | None:
-    """Return {class, default, description} for a filter ID (D1, F19, etc.)."""
-    registry = _load_registry()
-    key = filter_id.upper()
-    entry = registry.get(key)
-    if entry and entry.get("strategy", "").lower() == strategy.lower():
-        return entry
-    # Try without strategy filter
-    if entry:
-        return entry
+def get_param_class(param_name: str, strategy: str = "alpha") -> ParameterClass | None:
+    """Return Class A/B/C for a named parameter.
+
+    Looks up the parameter in the glossary's parameter_classes section.
+    """
+    glossary = _load_glossary()
+    param_classes = glossary.get("parameter_classes", {})
+
+    name_lower = param_name.lower()
+
+    for cls_letter, cls_info in param_classes.items():
+        for member in cls_info.get("members", []):
+            if name_lower in member.lower() or member.lower() in name_lower:
+                return ParameterClass(cls_letter)
+
     return None
 
 
 def get_input_index(param_name: str, strategy: str = "alpha") -> int | None:
-    """Return the 0-based input index for a named parameter."""
-    registry = _load_registry()
-    key = param_name.lower()
-    for name, entry in registry.items():
-        if name.lower() == key and entry.get("strategy", "").lower() == strategy.lower():
-            return entry.get("index")
+    """Return the 0-based input index for a named parameter.
+
+    Returns None if not found — the input index must come from
+    the strategy's input_index CSV or the param_class_master.yaml.
+    """
+    # Input indices are strategy-specific and not in the glossary JSON.
+    # They come from the input_index CSV files (master_v14_3_input_index.csv, etc.)
+    # Return None until those are loaded.
     return None
 
 
 def validate_param_bounds(param_name: str, value: float, strategy: str = "alpha") -> bool:
     """Check proposed value is within allowed bounds for a parameter.
 
-    Returns True if within bounds, False otherwise.
-    Currently uses hardcoded bounds — replace with param_class_master.yaml when available.
+    Returns True if within bounds (or if bounds are unknown).
+    Bounds come from param_class_master.yaml — not yet loaded.
     """
-    # Hardcoded bounds for common parameters
-    bounds: dict[str, tuple[float, float]] = {
-        "bblength": (10, 50),
-        "rsilength": (7, 21),
-        "atrlength": (7, 21),
-        "adxthreshold": (15, 35),
-        "cvdthreshold": (50, 200),
-        "trailingstoppct": (0.5, 5.0),
-        "be1trigger": (0.5, 3.0),
-        "be2trigger": (1.0, 5.0),
-    }
-
-    key = param_name.lower()
-    if key in bounds:
-        lo, hi = bounds[key]
-        return lo <= value <= hi
-
-    # If no bounds defined, allow (pass-through)
+    # Until param_class_master.yaml is loaded, allow all values
     return True

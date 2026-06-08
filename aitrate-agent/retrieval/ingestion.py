@@ -456,14 +456,17 @@ async def ingest_all_project_documents(kb_dir: Path) -> dict[str, int]:
 def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
     """Build the registry of all documents to ingest.
 
-    Project documents are in the sibling project_docs/ directory.
-    KB content is in kb_dir (filters, parameters, playbook).
+    Project documents layout (Strategy Docs/):
+      - Root: governance specs, filter glossary JSON, TSI spec
+      - strategy explain/: handbooks (Alpha, Master, NRX, Sentinel)
+      - backtest/: xlsx trade logs
     """
     project_dir = kb_dir.parent / "project_docs"
+    explain_dir = project_dir / "strategy explain"
     sources: list[IngestionSource] = []
 
     # ─── Alpha handbooks (ZIP archives with .pdf extensions) ──────────────────
-    alpha_dir = project_dir / "Alpha v15.9.1"
+    alpha_dir = explain_dir / "Alpha v15.9.1"
     alpha_handbooks = [
         ("alpha_handbook_v15_9_1_vol_ab", "15.9.1", "Alpha Handbook Vol A-B", "NARRUX_Alpha_v15.9.1_Handbook_Vol_A-B.pdf", "alpha", "AB"),
         ("alpha_handbook_v15_9_1_vol_c", "15.9.1", "Alpha Handbook Vol C", "NARRUX_Alpha_v15.9.1_Handbook_Vol_C.pdf", "alpha", "C"),
@@ -481,7 +484,7 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
     # its content is already in vol_ef.
 
     # ─── Sentinel handbook ────────────────────────────────────────────────────
-    sentinel_dir = project_dir / "Sentinel v1.9"
+    sentinel_dir = explain_dir / "Sentinel v1.9"
     sources.append(IngestionSource(
         path=sentinel_dir / "NARRUX_Sentinel_v1.9_Handbook.pdf",
         doc_id="sentinel_handbook_v1_9", doc_version="1.9",
@@ -490,7 +493,7 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
     ))
 
     # ─── Master handbook ──────────────────────────────────────────────────────
-    master_dir = project_dir / "MAster"
+    master_dir = explain_dir / "MAster"
     sources.append(IngestionSource(
         path=master_dir / "NARRUX_Master_v14.3_Handbook.docx",
         doc_id="master_handbook_v14_3", doc_version="14.3",
@@ -505,7 +508,7 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
     ))
 
     # ─── NRX handbook ─────────────────────────────────────────────────────────
-    nrx_dir = project_dir / "NRX"
+    nrx_dir = explain_dir / "NRX"
     sources.append(IngestionSource(
         path=nrx_dir / "NARRUX_NRX_MTrv1_Handbook.docx",
         doc_id="nrx_mtr_v1_handbook", doc_version="1.0",
@@ -543,6 +546,8 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
          "NARRUX_Input_Index_Appendix.docx", DocumentScope.strategy),
         ("filter_glossary_json", "1.0", "NARRUX Filter Glossary (JSON)",
          "narrux_filter_glossary.json", DocumentScope.filter_glossary),
+        ("tsi_v2_spec", "2.0", "NARRUX TSI v2.0 CA Engineering Spec",
+         "NARRUX_TSI_v2.0_CA_Engineering_Spec.docx", DocumentScope.governance),
     ]
     for doc_id, ver, title, filename, scope in governance_docs:
         sources.append(IngestionSource(
