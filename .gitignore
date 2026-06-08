@@ -1,3 +1,4 @@
 *.pdf
 .claude
 strategy docs/
+docs/
