@@ -30,6 +30,8 @@ _GLOSSARY_FALLBACK = _STRATEGY_DOCS / "narrux_filter_glossary.json"
 
 # Input index CSV locations — kb_content first, then Strategy Docs
 _INPUT_INDEX_FILES = {
+    "alpha": _PACKAGE_DIR / "kb_content" / "parameters" / "alpha_v15_9_1_input_index.csv",
+    "sentinel": _PACKAGE_DIR / "kb_content" / "parameters" / "sentinel_v1_9_input_index.csv",
     "master": _PACKAGE_DIR / "kb_content" / "parameters" / "master_v14_3_input_index.csv",
     "nrx": _PACKAGE_DIR / "kb_content" / "parameters" / "nrx_mtr_v1_input_index.csv",
 }
@@ -180,19 +182,20 @@ def _load_input_index(strategy: str) -> dict[str, dict]:
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            name = row.get("name", "").strip()
+            # Handle both "name" and "Input name" header formats
+            name = row.get("name", row.get("Input name", "")).strip()
             if not name:
                 continue
             try:
-                idx = int(row.get("index", -1))
+                idx = int(row.get("index", row.get("Idx", -1)))
             except ValueError:
                 continue
             index[name.lower()] = {
                 "index": idx,
                 "name": name,
-                "type": row.get("type", ""),
-                "default": row.get("default", ""),
-                "group": row.get("group", ""),
+                "type": row.get("type", row.get("Type", "")),
+                "default": row.get("default", row.get("Default", "")),
+                "group": row.get("group", row.get("Group", "")),
             }
 
     logger.info("loaded_input_index", strategy=strategy, entries=len(index))
