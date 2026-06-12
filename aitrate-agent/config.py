@@ -39,7 +39,24 @@ class Settings(BaseSettings):
     # ─── Redis ──────────────────────────────────────────────
     redis_url: str = Field(default="redis://localhost:6379/0")
 
-    # ─── Anthropic ──────────────────────────────────────────
+    # ─── LLM Provider ───────────────────────────────────────
+    llm_provider: str = Field(
+        default="gemini",
+        description="LLM provider: 'gemini' or 'anthropic'",
+    )
+
+    # ─── Gemini (development) ────────────────────────────────
+    google_api_key: str = Field(default="")
+    gemini_model_primary: str = Field(
+        default="gemini-2.5-flash",
+        description="Primary Gemini model for F-01, F-02, F-04",
+    )
+    gemini_model_secondary: str = Field(
+        default="gemini-2.5-flash",
+        description="Secondary Gemini model for F-03, F-05",
+    )
+
+    # ─── Anthropic (production) ─────────────────────────────
     anthropic_api_key: str = Field(default="sk-ant-xxx")
     anthropic_model_primary: str = Field(
         default="claude-opus-4-7", description="Primary LLM for F-01, F-02, F-04"

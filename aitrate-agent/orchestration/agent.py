@@ -42,30 +42,47 @@ settings = get_settings()
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
+# Resolve models based on LLM provider setting
+def _get_models() -> dict[str, str]:
+    """Return primary/secondary model names based on llm_provider setting."""
+    if settings.llm_provider == "anthropic":
+        return {
+            "primary": settings.anthropic_model_primary,
+            "secondary": settings.anthropic_model_secondary,
+        }
+    return {
+        "primary": settings.gemini_model_primary,
+        "secondary": settings.gemini_model_secondary,
+    }
+
+
+_models = _get_models()
+
+
 # Function routing table
 FUNCTION_CONFIG = {
     FunctionID.F01: {
-        "model": settings.anthropic_model_primary,
+        "model": _models["primary"],
         "prompt_file": "f01_strategy_explainer.md",
         "retrieval_scope": "strategy",
     },
     FunctionID.F02: {
-        "model": settings.anthropic_model_primary,
+        "model": _models["primary"],
         "prompt_file": "f02_backtest_interpreter.md",
         "retrieval_scope": "backtest_analysis",
     },
     FunctionID.F03: {
-        "model": settings.anthropic_model_secondary,
+        "model": _models["secondary"],
         "prompt_file": "f03_tsi_scorer.md",
         "retrieval_scope": "tsi_spec",
     },
     FunctionID.F04: {
-        "model": settings.anthropic_model_primary,
+        "model": _models["primary"],
         "prompt_file": "f04_parameter_recommender.md",
         "retrieval_scope": "filter_glossary",
     },
     FunctionID.F05: {
-        "model": settings.anthropic_model_secondary,
+        "model": _models["secondary"],
         "prompt_file": "f05_drift_monitor.md",
         "retrieval_scope": "drift_monitor",
     },
@@ -102,7 +119,7 @@ async def run(
     user_id: str,
     structured_input: dict | None = None,
     metadata_filter: dict | None = None,
-    adapter: str = "pydantic_ai",
+    adapter: str = "gemini",
 ) -> AgentResponse:
     """Full RAG pipeline.
 

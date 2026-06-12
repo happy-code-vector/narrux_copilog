@@ -1,7 +1,9 @@
-"""LLM client — Protocol + two adapters (Direct Anthropic + Pydantic AI).
+"""LLM client — Protocol + adapters (Gemini, Anthropic, Pydantic AI).
 
-IMPORTANT: This is the ONLY file in the entire project that imports pydantic_ai.
-pydantic_ai imports happen inside __init__ methods, NOT at module level.
+Adapters:
+- 'gemini': Google Gemini API (default for development)
+- 'anthropic': Direct Anthropic SDK
+- 'pydantic_ai': Pydantic AI with Anthropic (production)
 
 LOC budget: ≤ 500 lines across orchestration/.
 """
@@ -73,12 +75,15 @@ def compute_prompt_hash(prompt: str) -> str:
 _COST_PER_1K: dict[str, dict[str, float]] = {
     "claude-opus-4-7": {"input": 0.015, "output": 0.075},
     "claude-sonnet-4-6": {"input": 0.003, "output": 0.015},
+    "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
+    "gemini-2.5-flash": {"input": 0.00015, "output": 0.0006},
+    "gemini-2.5-pro": {"input": 0.00125, "output": 0.005},
 }
 
 
 def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     """Estimate the cost of an LLM call in USD."""
-    costs = _COST_PER_1K.get(model, {"input": 0.015, "output": 0.075})
+    costs = _COST_PER_1K.get(model, {"input": 0.001, "output": 0.002})
     return (input_tokens / 1000 * costs["input"]) + (output_tokens / 1000 * costs["output"])
 
 
@@ -91,6 +96,66 @@ def _build_context_block(chunks: list[str]) -> str:
         lines.append(f"[{i}] {chunk}")
     lines.append("</retrieved_context>")
     return "\n".join(lines)
+
+
+# ─── Gemini Adapter ──────────────────────────────────────────────────────────
+
+
+class GeminiAdapter:
+    """Google Gemini API adapter.
+
+    Uses google.genai. Import happens inside __init__.
+    """
+
+    def __init__(self) -> None:
+        from google import genai
+
+        settings = get_settings()
+        self._client = genai.Client(api_key=settings.google_api_key)
+        self._settings = settings
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        """Generate a completion using Gemini API."""
+        from google.genai.types import GenerateContentConfig
+
+        model = request.model or "gemini-2.0-flash"
+        max_tokens = request.max_tokens or self._settings.max_tokens_per_response
+
+        # Build context block
+        context_block = _build_context_block(request.context_chunks)
+        full_message = request.user_message
+        if context_block:
+            full_message = f"{context_block}\n\n{request.user_message}"
+
+        logger.info("gemini_complete", model=model)
+
+        response = self._client.models.generate_content(
+            model=model,
+            contents=full_message,
+            config=GenerateContentConfig(
+                system_instruction=request.system_prompt,
+                max_output_tokens=max_tokens,
+                temperature=request.temperature,
+            ),
+        )
+
+        content = response.text or ""
+        # Gemini doesn't always provide token counts in the same way
+        input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else 0
+        output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) if hasattr(response, "usage_metadata") and response.usage_metadata else 0
+        cost = estimate_cost(model, input_tokens, output_tokens)
+
+        return LLMResponse(
+            content=content,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost,
+            raw=str(response),
+        )
+
+    def system_prompt_hash(self, prompt: str) -> str:
+        return compute_prompt_hash(prompt)
 
 
 # ─── Direct Anthropic Adapter ────────────────────────────────────────────────
@@ -211,12 +276,15 @@ class PydanticAIAdapter:
 # ─── Factory ─────────────────────────────────────────────────────────────────
 
 
-def get_llm_client(adapter: str = "pydantic_ai") -> LLMClient:
+def get_llm_client(adapter: str = "gemini") -> LLMClient:
     """Get an LLM client implementation.
 
     Args:
-        adapter: "direct" → DirectAnthropicAdapter, else → PydanticAIAdapter
+        adapter: "gemini" → GeminiAdapter, "anthropic" → DirectAnthropicAdapter,
+                 "pydantic_ai" → PydanticAIAdapter
     """
-    if adapter == "direct":
+    if adapter == "anthropic":
         return DirectAnthropicAdapter()
-    return PydanticAIAdapter()
+    if adapter == "pydantic_ai":
+        return PydanticAIAdapter()
+    return GeminiAdapter()
