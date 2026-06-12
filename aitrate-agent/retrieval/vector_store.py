@@ -285,9 +285,9 @@ async def similarity_search(
         )
 
     # Execute search
-    results = client.search(
+    results = client.query_points(
         collection_name=settings.qdrant_collection,
-        query_vector=query_embedding,
+        query=query_embedding,
         limit=top_k,
         query_filter=search_filter,
         with_payload=True,
@@ -295,7 +295,7 @@ async def similarity_search(
     )
 
     chunks = []
-    for result in results:
+    for result in results.points:
         chunk = _point_to_chunk(result, similarity=result.score)
         chunks.append(chunk)
 
