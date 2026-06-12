@@ -1,4 +1,4 @@
 *.pdf
 .claude
-strategy docs/
+strategy docs*/
 docs/

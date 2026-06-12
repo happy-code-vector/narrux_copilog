@@ -20,41 +20,34 @@ from tools.schemas import ParameterClass
 
 logger = structlog.get_logger(__name__)
 
-# Paths — prefer kb_content/ first, fall back to Strategy Docs/
+# Paths — canonical location is kb_content/
 _PACKAGE_DIR = Path(__file__).parent.parent
-_PROJECT_ROOT = _PACKAGE_DIR.parent
-_STRATEGY_DOCS = _PROJECT_ROOT / "Strategy Docs"
+_KB_DIR = _PACKAGE_DIR / "kb_content"
 
-_GLOSSARY_PATH = _PACKAGE_DIR / "kb_content" / "parameters" / "narrux_filter_glossary.json"
-_GLOSSARY_FALLBACK = _STRATEGY_DOCS / "narrux_filter_glossary.json"
+_GLOSSARY_PATH = _KB_DIR / "filters" / "narrux_filter_glossary.json"
 
-# Input index CSV locations — kb_content first, then Strategy Docs
+# Input index CSV locations
 _INPUT_INDEX_FILES = {
-    "alpha": _PACKAGE_DIR / "kb_content" / "parameters" / "alpha_v15_9_1_input_index.csv",
-    "sentinel": _PACKAGE_DIR / "kb_content" / "parameters" / "sentinel_v1_9_input_index.csv",
-    "master": _PACKAGE_DIR / "kb_content" / "parameters" / "master_v14_3_input_index.csv",
-    "nrx": _PACKAGE_DIR / "kb_content" / "parameters" / "nrx_mtr_v1_input_index.csv",
-}
-_INPUT_INDEX_FALLBACKS = {
-    "master": _STRATEGY_DOCS / "strategy explain" / "MAster" / "master_v14_3_input_index.csv",
-    "nrx": _STRATEGY_DOCS / "strategy explain" / "NRX" / "nrx_mtr_v1_input_index.csv",
+    "alpha": _KB_DIR / "parameters" / "alpha_v15_9_1_input_index.csv",
+    "sentinel": _KB_DIR / "parameters" / "sentinel_v1_9_input_index.csv",
+    "master": _KB_DIR / "parameters" / "master_v14_3_input_index.csv",
+    "nrx": _KB_DIR / "parameters" / "nrx_mtr_v1_input_index.csv",
 }
 
 
 @lru_cache(maxsize=1)
 def _load_glossary() -> dict:
-    """Load the filter glossary JSON. Returns raw dict. Prefers kb_content/."""
-    for path in [_GLOSSARY_PATH, _GLOSSARY_FALLBACK]:
-        if path.exists():
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                logger.info("loaded_filter_glossary", path=str(path))
-                return data
-            except Exception as e:
-                logger.warning("failed_to_load_glossary", path=str(path), error=str(e))
-
-    logger.warning("filter_glossary_not_found")
-    return {}
+    """Load the filter glossary JSON. Returns raw dict."""
+    if not _GLOSSARY_PATH.exists():
+        logger.warning("filter_glossary_not_found", path=str(_GLOSSARY_PATH))
+        return {}
+    try:
+        data = json.loads(_GLOSSARY_PATH.read_text(encoding="utf-8"))
+        logger.info("loaded_filter_glossary", path=str(_GLOSSARY_PATH))
+        return data
+    except Exception as e:
+        logger.warning("failed_to_load_glossary", path=str(_GLOSSARY_PATH), error=str(e))
+        return {}
 
 
 def _build_filter_index(glossary: dict) -> dict[str, dict]:
@@ -202,12 +195,8 @@ def get_param_class(param_name: str, strategy: str = "alpha") -> ParameterClass 
 
 @lru_cache(maxsize=4)
 def _load_input_index(strategy: str) -> dict[str, dict]:
-    """Load input index CSV for a strategy. Prefers kb_content/, falls back to Strategy Docs/."""
+    """Load input index CSV for a strategy from kb_content/parameters/."""
     csv_path = _INPUT_INDEX_FILES.get(strategy.lower())
-    if not csv_path or not csv_path.exists():
-        # Try fallback
-        csv_path = _INPUT_INDEX_FALLBACKS.get(strategy.lower())
-
     if not csv_path or not csv_path.exists():
         logger.warning("input_index_not_found", strategy=strategy)
         return {}

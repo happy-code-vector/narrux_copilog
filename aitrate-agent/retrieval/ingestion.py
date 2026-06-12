@@ -456,142 +456,151 @@ async def ingest_all_project_documents(kb_dir: Path) -> dict[str, int]:
 def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
     """Build the registry of all documents to ingest.
 
-    Project documents layout (Strategy Docs/):
-      - Root: governance specs, filter glossary JSON, TSI spec
-      - strategy explain/: handbooks (Alpha, Master, NRX, Sentinel)
-      - backtest/: xlsx trade logs
+    kb_content/ layout:
+      strategies/     → strategy handbooks (per-strategy subdirs)
+      filters/        → filter glossary + JSON lookup
+      parameters/     → input index CSVs, bounds (future)
+      governance/     → specs, frameworks, rules
+      playbook/       → edge cases, function specs
+      templates/      → report templates, reference appendices
     """
-    project_dir = kb_dir.parent / "project_docs"
-    explain_dir = project_dir / "strategy explain"
     sources: list[IngestionSource] = []
 
-    # ─── Alpha handbooks (ZIP archives with .pdf extensions) ──────────────────
-    alpha_dir = explain_dir / "Alpha v15.9.1"
-    alpha_handbooks = [
-        ("alpha_handbook_v15_9_1_vol_ab", "15.9.1", "Alpha Handbook Vol A-B", "NARRUX_Alpha_v15.9.1_Handbook_Vol_A-B.pdf", "alpha", "AB"),
-        ("alpha_handbook_v15_9_1_vol_c", "15.9.1", "Alpha Handbook Vol C", "NARRUX_Alpha_v15.9.1_Handbook_Vol_C.pdf", "alpha", "C"),
-        ("alpha_handbook_v15_9_1_vol_d", "15.9.1", "Alpha Handbook Vol D", "NARRUX_Alpha_v15.9.1_Handbook_Vol_D.pdf", "alpha", "D"),
-        ("alpha_handbook_v15_9_1_vol_ef", "15.9.1", "Alpha Handbook Vol E-F", "NARRUX_Alpha_v15.9.1_Handbook_Vol_E-F.pdf", "alpha", "EF"),
-        ("alpha_handbook_v15_9_1_vol_hl", "15.9.1", "Alpha Handbook Vol H-L", "NARRUX_Alpha_v15.9.1_Handbook_Vol_H-L.pdf", "alpha", "HL"),
+    # ─── Strategy handbooks ───────────────────────────────────────────────────
+    strategies_dir = kb_dir / "strategies"
+
+    # Alpha handbooks (5 volumes)
+    alpha_dir = strategies_dir / "Alpha"
+    alpha_volumes = [
+        ("alpha_handbook_v15_9_1_vol_ab", "Vol_A-B", "AB"),
+        ("alpha_handbook_v15_9_1_vol_c", "Vol_C", "C"),
+        ("alpha_handbook_v15_9_1_vol_d", "Vol_D", "D"),
+        ("alpha_handbook_v15_9_1_vol_ef", "Vol_E-F", "EF"),
+        ("alpha_handbook_v15_9_1_vol_hl", "Vol_H-L", "HL"),
     ]
-    for doc_id, ver, title, filename, strategy, volume in alpha_handbooks:
+    for doc_id, vol_tag, volume in alpha_volumes:
+        filename = f"NARRUX_Alpha_v15.9.1_Handbook_{vol_tag}.md"
         sources.append(IngestionSource(
-            path=alpha_dir / filename, doc_id=doc_id, doc_version=ver,
-            title=title, scope=DocumentScope.strategy, strategy=strategy, volume=volume,
+            path=alpha_dir / filename, doc_id=doc_id, doc_version="15.9.1",
+            title=f"Alpha Handbook {vol_tag}", scope=DocumentScope.strategy,
+            strategy="alpha", volume=volume,
         ))
 
-    # NOTE: Do NOT register NARRUX_Alpha_v15_9_1_fulldepth_sample.pdf —
-    # its content is already in vol_ef.
-
-    # ─── Sentinel handbook ────────────────────────────────────────────────────
-    sentinel_dir = explain_dir / "Sentinel v1.9"
+    # Sentinel handbook
     sources.append(IngestionSource(
-        path=sentinel_dir / "NARRUX_Sentinel_v1.9_Handbook.pdf",
+        path=strategies_dir / "Sentinel" / "NARRUX_Sentinel_v1.9_Handbook.md",
         doc_id="sentinel_handbook_v1_9", doc_version="1.9",
         title="NARRUX Sentinel v1.9 Handbook", scope=DocumentScope.strategy,
         strategy="sentinel",
     ))
 
-    # ─── Master handbook ──────────────────────────────────────────────────────
-    master_dir = explain_dir / "MAster"
+    # Master handbook
     sources.append(IngestionSource(
-        path=master_dir / "NARRUX_Master_v14.3_Handbook.docx",
+        path=strategies_dir / "MAster" / "NARRUX_Master_v14.3_Handbook.md",
         doc_id="master_handbook_v14_3", doc_version="14.3",
         title="NARRUX Master v14.3 Handbook", scope=DocumentScope.strategy,
         strategy="master",
     ))
-    sources.append(IngestionSource(
-        path=master_dir / "master_v14_3_input_index.csv",
-        doc_id="master_v14_3_input_index", doc_version="1.0",
-        title="Master v14.3 Input Index", scope=DocumentScope.strategy,
-        strategy="master",
-    ))
 
-    # ─── NRX handbook ─────────────────────────────────────────────────────────
-    nrx_dir = explain_dir / "NRX"
+    # NRX handbook
     sources.append(IngestionSource(
-        path=nrx_dir / "NARRUX_NRX_MTrv1_Handbook.docx",
+        path=strategies_dir / "NRX" / "NARRUX_NRX_MTrv1_Handbook.md",
         doc_id="nrx_mtr_v1_handbook", doc_version="1.0",
         title="NARRUX NRX MTrv1 Handbook", scope=DocumentScope.strategy,
         strategy="nrx",
     ))
+
+    # Strategy comparison matrix
     sources.append(IngestionSource(
-        path=nrx_dir / "nrx_mtr_v1_input_index.csv",
-        doc_id="nrx_mtr_v1_input_index", doc_version="1.0",
-        title="NRX MTrv1 Input Index", scope=DocumentScope.strategy,
-        strategy="nrx",
+        path=strategies_dir / "NARRUX_Strategy_Comparison_Matrix_v1.0.md",
+        doc_id="strategy_comparison_matrix_v1_0", doc_version="1.0",
+        title="NARRUX Strategy Comparison Matrix v1.0", scope=DocumentScope.strategy,
     ))
 
-    # ─── Governance & process documents (root of project_docs) ────────────────
+    # ─── Input index CSVs ─────────────────────────────────────────────────────
+    params_dir = kb_dir / "parameters"
+    input_indices = [
+        ("alpha_v15_9_1_input_index", "alpha_v15_9_1_input_index.csv", "15.9.1", "alpha"),
+        ("sentinel_v1_9_input_index", "sentinel_v1_9_input_index.csv", "1.9", "sentinel"),
+        ("master_v14_3_input_index", "master_v14_3_input_index.csv", "14.3", "master"),
+        ("nrx_mtr_v1_input_index", "nrx_mtr_v1_input_index.csv", "1.0", "nrx"),
+    ]
+    for doc_id, filename, ver, strategy in input_indices:
+        sources.append(IngestionSource(
+            path=params_dir / filename, doc_id=doc_id, doc_version=ver,
+            title=f"{strategy.title()} Input Index", scope=DocumentScope.strategy,
+            strategy=strategy,
+        ))
+
+    # ─── Filter glossary ──────────────────────────────────────────────────────
+    filters_dir = kb_dir / "filters"
+    sources.append(IngestionSource(
+        path=filters_dir / "NARRUX_Filter_Glossary_and_Param_Classes_v1.1.md",
+        doc_id="filter_glossary_and_param_classes_v1_1", doc_version="1.1",
+        title="NARRUX Filter Glossary and Param Classes v1.1",
+        scope=DocumentScope.filter_glossary,
+    ))
+    sources.append(IngestionSource(
+        path=filters_dir / "narrux_filter_glossary.json",
+        doc_id="filter_glossary_json", doc_version="1.0",
+        title="NARRUX Filter Glossary (JSON)", scope=DocumentScope.filter_glossary,
+    ))
+
+    # ─── Governance ───────────────────────────────────────────────────────────
+    gov_dir = kb_dir / "governance"
     governance_docs = [
-        ("backtest_analysis_approach_v1_0", "1.0", "NARRUX Backtest Analysis Approach v1.0",
-         "NARRUX_Backtest_Analysis_Approach_v1_0.pdf", DocumentScope.process),
-        ("copilot_report_template_v1_0", "1.0", "NARRUX CoPilot Report Template v1.0",
-         "NARRUX_CoPilot_Report_Template_v1_0.pdf", DocumentScope.report_template),
-        ("kb_routing_and_guardrails_v1_0", "1.0", "NARRUX KB Routing and Guardrails v1.0",
-         "NARRUX_CoPilot_KB_Routing_and_Guardrails_v1.0.docx", DocumentScope.governance),
-        ("drift_monitor_f05_spec_v1_0", "1.0", "NARRUX Drift Monitor F05 Spec v1.0",
-         "NARRUX_Drift_Monitor_F05_Spec_v1.0.docx", DocumentScope.governance),
-        ("edgecase_playbook_v1_0", "1.0", "NARRUX EdgeCase Playbook v1.0",
-         "NARRUX_EdgeCase_Playbook_v1.0.docx", DocumentScope.playbook),
-        ("filter_glossary_and_param_classes_v1_1", "1.1", "NARRUX Filter Glossary and Param Classes v1.1",
-         "NARRUX_Filter_Glossary_and_Param_Classes_v1.1.docx", DocumentScope.filter_glossary),
-        ("leverage_framework_v1_0", "1.0", "NARRUX Leverage Framework v1.0",
-         "NARRUX_Leverage_Framework_v1.0.docx", DocumentScope.governance),
-        ("strategy_comparison_matrix_v1_0", "1.0", "NARRUX Strategy Comparison Matrix v1.0",
-         "NARRUX_Strategy_Comparison_Matrix_v1.0.docx", DocumentScope.strategy),
-        ("metric_definitions_v1_0", "1.0", "NARRUX Metric Definitions v1.0",
-         "NARRUX_Metric_Definitions_v1.0.docx", DocumentScope.governance),
-        ("input_index_appendix", "1.0", "NARRUX Input Index Appendix",
-         "NARRUX_Input_Index_Appendix.docx", DocumentScope.strategy),
-        ("filter_glossary_json", "1.0", "NARRUX Filter Glossary (JSON)",
-         "narrux_filter_glossary.json", DocumentScope.filter_glossary),
         ("tsi_v2_spec", "2.0", "NARRUX TSI v2.0 CA Engineering Spec",
-         "NARRUX_TSI_v2.0_CA_Engineering_Spec.docx", DocumentScope.governance),
+         "NARRUX_TSI_v2.0_CA_Engineering_Spec.md", DocumentScope.governance),
+        ("leverage_framework_v1_0", "1.0", "NARRUX Leverage Framework v1.0",
+         "NARRUX_Leverage_Framework_v1.0.md", DocumentScope.governance),
+        ("metric_definitions_v1_0", "1.0", "NARRUX Metric Definitions v1.0",
+         "NARRUX_Metric_Definitions_v1.0.md", DocumentScope.governance),
+        ("backtest_analysis_approach_v1_0", "1.0", "NARRUX Backtest Analysis Approach v1.0",
+         "NARRUX_Backtest_Analysis_Approach_v1.0.md", DocumentScope.process),
+        ("kb_routing_and_guardrails_v1_0", "1.0", "NARRUX KB Routing and Guardrails v1.0",
+         "NARRUX_CoPilot_KB_Routing_and_Guardrails_v1.0.md", DocumentScope.governance),
     ]
     for doc_id, ver, title, filename, scope in governance_docs:
         sources.append(IngestionSource(
-            path=project_dir / filename, doc_id=doc_id, doc_version=ver,
+            path=gov_dir / filename, doc_id=doc_id, doc_version=ver,
             title=title, scope=scope,
         ))
 
-    # ─── Functional spec (at project root, not in project_docs) ───────────────
-    spec_path = kb_dir.parent.parent / "aiTrate_AI_Agent_Functional_Spec_v1.0.pdf"
+    # ─── Playbook ─────────────────────────────────────────────────────────────
+    playbook_dir = kb_dir / "playbook"
+    playbook_docs = [
+        ("edgecase_playbook_v1_0", "1.0", "NARRUX EdgeCase Playbook v1.0",
+         "NARRUX_EdgeCase_Playbook_v1.0.md", DocumentScope.playbook),
+        ("drift_monitor_f05_spec_v1_0", "1.0", "NARRUX Drift Monitor F05 Spec v1.0",
+         "NARRUX_Drift_Monitor_F05_Spec_v1.0.md", DocumentScope.governance),
+    ]
+    for doc_id, ver, title, filename, scope in playbook_docs:
+        sources.append(IngestionSource(
+            path=playbook_dir / filename, doc_id=doc_id, doc_version=ver,
+            title=title, scope=scope,
+        ))
+
+    # ─── Templates ────────────────────────────────────────────────────────────
+    templates_dir = kb_dir / "templates"
+    templates_docs = [
+        ("copilot_report_template_v1_0", "1.0", "NARRUX CoPilot Report Template v1.0",
+         "NARRUX_CoPilot_Report_Template_v1.0.md", DocumentScope.report_template),
+        ("input_index_appendix", "1.0", "NARRUX Input Index Appendix",
+         "NARRUX_Input_Index_Appendix.md", DocumentScope.strategy),
+    ]
+    for doc_id, ver, title, filename, scope in templates_docs:
+        sources.append(IngestionSource(
+            path=templates_dir / filename, doc_id=doc_id, doc_version=ver,
+            title=title, scope=scope,
+        ))
+
+    # ─── Functional spec (at project root) ────────────────────────────────────
+    spec_path = kb_dir.parent.parent / "docs" / "aiTrate_AI_Agent_Functional_Spec_v1.0.pdf"
     if spec_path.exists():
         sources.append(IngestionSource(
             path=spec_path,
             doc_id="aitrate_agent_spec_v1_0", doc_version="1.0",
             title="aiTrate AI Agent Functional Spec v1.0", scope=DocumentScope.governance,
         ))
-
-    # ─── KB content — filter glossary ─────────────────────────────────────────
-    filters_dir = kb_dir / "filters"
-    if filters_dir.exists():
-        for md_file in sorted(filters_dir.glob("*.md")):
-            sources.append(IngestionSource(
-                path=md_file,
-                doc_id=f"filter_glossary_{md_file.stem}", doc_version="1.0",
-                title=f"Filter Glossary: {md_file.stem}",
-                scope=DocumentScope.filter_glossary,
-            ))
-
-    # ─── KB content — parameter master ────────────────────────────────────────
-    param_file = kb_dir / "parameters" / "param_class_master.yaml"
-    if param_file.exists():
-        sources.append(IngestionSource(
-            path=param_file,
-            doc_id="param_class_master", doc_version="1.0",
-            title="Parameter Class Master", scope=DocumentScope.parameter_master,
-        ))
-
-    # ─── KB content — playbook ────────────────────────────────────────────────
-    playbook_dir = kb_dir / "playbook"
-    if playbook_dir.exists():
-        for md_file in sorted(playbook_dir.glob("*.md")):
-            sources.append(IngestionSource(
-                path=md_file,
-                doc_id=f"playbook_{md_file.stem}", doc_version="1.0",
-                title=f"Playbook: {md_file.stem}", scope=DocumentScope.playbook,
-            ))
 
     return sources
