@@ -50,17 +50,20 @@ class Settings(BaseSettings):
 
     # ─── Embedding Model ─────────────────────────────────────
     embedding_provider: str = Field(
-        default="local",
-        description="Embedding provider: 'local' (sentence-transformers) or 'voyage' (API)",
+        default="gemini",
+        description="Embedding provider: 'local', 'gemini', or 'voyage'",
     )
     embedding_model: str = Field(
-        default="BAAI/bge-large-en-v1.5",
-        description="Embedding model name (local model or Voyage model)",
+        default="models/text-embedding-004",
+        description="Embedding model name",
     )
     embedding_dims: int = Field(
-        default=1024,
+        default=768,
         description="Embedding dimensions (must match model)",
     )
+
+    # ─── Gemini (development) ────────────────────────────────
+    google_api_key: str = Field(default="")
 
     # ─── Voyage AI (production) ──────────────────────────────
     voyage_api_key: str = Field(default="pa-xxx")
