@@ -116,11 +116,16 @@ def _get_filter_index() -> dict[str, dict]:
 
 
 def get_filter_info(filter_id: str, strategy: str | None = None) -> dict | None:
-    """Return {name, class, default, strategy} for a filter ID.
+    """Return {name, class, default, strategy, fnum?} for a filter ID.
 
     Args:
         filter_id: Filter identifier (D1, F1, E1, N1, etc.)
         strategy: Optional strategy filter (alpha, sentinel, master, nrx)
+
+    Returns:
+        Dict with name, class, default, strategy. Alpha filters also include
+        fnum when the filter has a cross-reference to a Sentinel F-number
+        (e.g., D11 → F20, D12 → F21, D13 → F22, D17 → F19).
     """
     index = _get_filter_index()
     fid = filter_id.upper()
