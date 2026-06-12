@@ -2,6 +2,10 @@
 
 NO pydantic_ai imports. NO writes. Pure Python + psycopg.
 Used by F-05 (drift monitor) to read live trades from Postgres.
+
+NOTE: This connects to the FULL-STACK TEAM's PostgreSQL database,
+NOT the Qdrant vector store. The connection string comes from the
+full-stack team's config. TODO: integrate with their DB when available.
 """
 
 from __future__ import annotations
@@ -10,10 +14,14 @@ from typing import Literal
 
 import structlog
 
-from retrieval.vector_store import get_conn
 from tools.schemas import TradeRecord
 
 logger = structlog.get_logger(__name__)
+
+# TODO: Replace with the full-stack team's PostgreSQL connection.
+# This module needs a psycopg AsyncConnectionPool pointing at their
+# trade_records table. For now, all functions return empty results.
+_TRADE_DB_AVAILABLE = False
 
 
 async def get_recent_trades(
@@ -25,52 +33,17 @@ async def get_recent_trades(
     """Return most recent N trades for a strategy+asset combination."""
     logger.info("get_recent_trades", strategy_id=strategy_id, asset=asset, source=source, limit=limit)
 
-    async with get_conn() as conn:
-        cur = await conn.execute(
-            """
-            SELECT trade_id, strategy_id, asset, timeframe, source, execution_mode,
-                   side, entry_time, exit_time, entry_price, exit_price, size,
-                   pnl, pnl_pct, mae, mfe, entry_method, exit_reason,
-                   filters_fired, regime_label, params_hash, capital_basis
-            FROM trade_records
-            WHERE strategy_id = %s AND asset = %s AND source = %s
-            ORDER BY entry_time DESC
-            LIMIT %s
-            """,
-            (strategy_id, asset, source, limit),
-        )
-        rows = await cur.fetchall()
+    if not _TRADE_DB_AVAILABLE:
+        logger.warning("trade_db_not_available", detail="Full-stack team's DB not connected yet")
+        return []
 
-    trades = []
-    for row in rows:
-        trades.append(
-            TradeRecord(
-                trade_id=row["trade_id"],
-                strategy_id=row["strategy_id"],
-                asset=row["asset"],
-                timeframe=row["timeframe"] or "",
-                source=row["source"],
-                execution_mode=row["execution_mode"] or "CLOSED",
-                side=row["side"],
-                entry_time=row["entry_time"],
-                exit_time=row["exit_time"],
-                entry_price=float(row["entry_price"]),
-                exit_price=float(row["exit_price"]) if row["exit_price"] else None,
-                size=float(row["size"]) if row["size"] else 0,
-                pnl=float(row["pnl"]) if row["pnl"] else None,
-                pnl_pct=float(row["pnl_pct"]) if row["pnl_pct"] else None,
-                mae=float(row["mae"]) if row["mae"] else 0,
-                mfe=float(row["mfe"]) if row["mfe"] else 0,
-                entry_method=row["entry_method"],
-                exit_reason=row["exit_reason"] or "",
-                filters_fired=row["filters_fired"] or [],
-                regime_label=row["regime_label"],
-                params_hash=row["params_hash"],
-                capital_basis=float(row["capital_basis"]) if row["capital_basis"] else None,
-            )
-        )
+    # TODO: Implement when full-stack team's DB is available
+    # async with get_trade_db_conn() as conn:
+    #     cur = await conn.execute(...)
+    #     rows = await cur.fetchall()
+    #     return [TradeRecord(...) for row in rows]
 
-    return trades
+    return []
 
 
 async def get_rolling_window(

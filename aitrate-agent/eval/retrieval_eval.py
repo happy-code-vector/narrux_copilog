@@ -14,7 +14,7 @@ import structlog
 
 from retrieval.embeddings import embed_query
 from retrieval.reranker import rerank
-from retrieval.vector_store import init_pool, close_pool, similarity_search
+from retrieval.vector_store import init_client, close_client, similarity_search
 
 logger = structlog.get_logger(__name__)
 
@@ -93,11 +93,11 @@ if __name__ == "__main__":
     import sys
 
     async def main():
-        await init_pool()
+        init_client()
         try:
             questions_path = sys.argv[1] if len(sys.argv) > 1 else "eval/pillar_a_questions.yaml"
             await run_eval(questions_path)
         finally:
-            await close_pool()
+            close_client()
 
     asyncio.run(main())

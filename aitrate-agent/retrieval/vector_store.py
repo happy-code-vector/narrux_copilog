@@ -1,144 +1,223 @@
-"""pgvector async operations using psycopg (v3) with AsyncConnectionPool.
+"""Qdrant vector store operations — supports server (Docker) and embedded modes.
 
-NO pydantic_ai imports. Pure Python.
+NO pydantic_ai imports. Pure Python + qdrant-client.
 """
 
 from __future__ import annotations
 
-import json
-from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+import uuid
+from typing import Any
 
 import structlog
-from psycopg import AsyncConnection
-from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointIdsList,
+    PointStruct,
+    VectorParams,
+)
 
 from config import get_settings
 from tools.schemas import KBChunk, KBDocument
 
 logger = structlog.get_logger(__name__)
 
-# Global pool — initialized at startup, closed at shutdown
-_pool: AsyncConnectionPool | None = None
+# Global client — initialized at startup
+_client: QdrantClient | None = None
 
 
-async def init_pool() -> None:
-    """Initialize the psycopg AsyncConnectionPool. Call at startup."""
-    global _pool
+def init_client() -> None:
+    """Initialize Qdrant client. Call at startup.
+
+    Mode is determined by settings.qdrant_mode:
+    - 'server': connects to Qdrant server (Docker) at settings.qdrant_url
+    - 'embedded': uses local storage at settings.qdrant_path
+    """
+    global _client
     settings = get_settings()
-    _pool = AsyncConnectionPool(
-        conninfo=settings.database_url,
-        min_size=2,
-        max_size=10,
-        kwargs={"row_factory": dict_row},
+
+    if settings.qdrant_mode == "server":
+        _client = QdrantClient(url=settings.qdrant_url)
+        logger.info("qdrant_initialized", mode="server", url=settings.qdrant_url)
+    else:
+        _client = QdrantClient(path=settings.qdrant_path)
+        logger.info("qdrant_initialized", mode="embedded", path=settings.qdrant_path)
+
+    _ensure_collection()
+
+
+def close_client() -> None:
+    """Close Qdrant client. Call at shutdown."""
+    global _client
+    if _client:
+        _client.close()
+        _client = None
+        logger.info("qdrant_closed")
+
+
+def _get_client() -> QdrantClient:
+    """Get the Qdrant client. Raises if not initialized."""
+    if _client is None:
+        raise RuntimeError("Qdrant not initialized — call init_client() first")
+    return _client
+
+
+def _ensure_collection() -> None:
+    """Create the KB collection if it doesn't exist."""
+    client = _get_client()
+    settings = get_settings()
+    collection = settings.qdrant_collection
+
+    collections = [c.name for c in client.get_collections().collections]
+    if collection not in collections:
+        client.create_collection(
+            collection_name=collection,
+            vectors_config=VectorParams(
+                size=1024,  # voyage-3-large dimensions
+                distance=Distance.COSINE,
+            ),
+        )
+        logger.info("collection_created", collection=collection)
+    else:
+        logger.info("collection_exists", collection=collection)
+
+
+def _chunk_to_point(chunk: KBChunk) -> PointStruct:
+    """Convert a KBChunk to a Qdrant PointStruct."""
+    # Use deterministic UUID from chunk_id
+    point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, chunk.chunk_id))
+
+    payload: dict[str, Any] = {
+        "chunk_id": chunk.chunk_id,
+        "doc_id": chunk.doc_id,
+        "doc_version": chunk.doc_version,
+        "content": chunk.content,
+        "token_count": chunk.token_count,
+    }
+    # Merge all metadata into payload
+    if chunk.metadata:
+        payload.update(chunk.metadata)
+
+    return PointStruct(
+        id=point_id,
+        vector=chunk.embedding,
+        payload=payload,
     )
-    await _pool.open()
-    logger.info("db_pool_initialized")
 
 
-async def close_pool() -> None:
-    """Close the pool. Call at shutdown."""
-    global _pool
-    if _pool:
-        await _pool.close()
-        _pool = None
-        logger.info("db_pool_closed")
+def _point_to_chunk(point: Any, similarity: float = 0.0) -> KBChunk:
+    """Convert a Qdrant point to a KBChunk."""
+    payload = point.payload or {}
+    metadata = {
+        k: v for k, v in payload.items()
+        if k not in ("chunk_id", "doc_id", "doc_version", "content", "token_count")
+    }
+    metadata["_similarity"] = similarity
 
-
-@asynccontextmanager
-async def get_conn() -> AsyncGenerator[AsyncConnection, None]:
-    """Yield an AsyncConnection from the pool."""
-    if _pool is None:
-        raise RuntimeError("Pool not initialized — call init_pool() first")
-    async with _pool.connection() as conn:
-        yield conn
+    return KBChunk(
+        chunk_id=payload.get("chunk_id", point.id),
+        doc_id=payload.get("doc_id", ""),
+        doc_version=payload.get("doc_version", ""),
+        content=payload.get("content", ""),
+        token_count=payload.get("token_count"),
+        embedding=None,  # Don't return embedding in search results
+        metadata=metadata,
+    )
 
 
 async def upsert_document(doc: KBDocument) -> None:
-    """Insert or update a document in kb_documents."""
-    async with get_conn() as conn:
-        await conn.execute(
-            """
-            INSERT INTO kb_documents (doc_id, doc_version, title, scope, strategy,
-                volume, module_id, owner, last_updated, supersedes, deprecated)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (doc_id) DO UPDATE SET
-                doc_version = EXCLUDED.doc_version,
-                title = EXCLUDED.title,
-                scope = EXCLUDED.scope,
-                strategy = EXCLUDED.strategy,
-                volume = EXCLUDED.volume,
-                module_id = EXCLUDED.module_id,
-                owner = EXCLUDED.owner,
-                last_updated = EXCLUDED.last_updated,
-                supersedes = EXCLUDED.supersedes,
-                deprecated = EXCLUDED.deprecated
-            """,
-            (
-                doc.doc_id, doc.doc_version, doc.title, doc.scope.value,
-                doc.strategy, doc.volume, doc.module_id, doc.owner,
-                doc.last_updated, doc.supersedes, doc.deprecated,
-            ),
-        )
-        await conn.commit()
-    logger.info("document_upserted", doc_id=doc.doc_id)
+    """Store document metadata.
+
+    In Qdrant, document metadata is stored in chunk payloads.
+    This is a no-op — metadata is set when chunks are upserted.
+    """
+    logger.info("document_registered", doc_id=doc.doc_id)
 
 
 async def mark_document_deprecated(doc_id: str) -> None:
-    """Mark a document as deprecated."""
-    async with get_conn() as conn:
-        await conn.execute(
-            "UPDATE kb_documents SET deprecated = TRUE WHERE doc_id = %s",
-            (doc_id,),
-        )
-        await conn.commit()
-    logger.info("document_deprecated", doc_id=doc_id)
+    """Mark all chunks for a document as deprecated."""
+    client = _get_client()
+    settings = get_settings()
+
+    # Find all chunks for this document
+    results, _ = client.scroll(
+        collection_name=settings.qdrant_collection,
+        scroll_filter=Filter(
+            must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+        ),
+        limit=10000,
+        with_payload=False,
+        with_vectors=False,
+    )
+
+    if not results:
+        logger.warning("no_chunks_to_deprecate", doc_id=doc_id)
+        return
+
+    # Update each chunk's payload to set deprecated=True
+    point_ids = [point.id for point in results]
+    client.set_payload(
+        collection_name=settings.qdrant_collection,
+        payload={"deprecated": True},
+        points=PointIdsList(points=point_ids),
+    )
+    logger.info("document_deprecated", doc_id=doc_id, chunks=len(point_ids))
 
 
 async def upsert_chunks(chunks: list[KBChunk]) -> int:
-    """Insert or update chunks. Skip chunks with no embedding. Return count."""
-    count = 0
-    async with get_conn() as conn:
-        for chunk in chunks:
-            if chunk.embedding is None:
-                continue
-            embedding_str = "[" + ",".join(str(f) for f in chunk.embedding) + "]"
-            await conn.execute(
-                """
-                INSERT INTO kb_chunks (chunk_id, doc_id, doc_version, content,
-                    token_count, embedding, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s::vector, %s)
-                ON CONFLICT (chunk_id) DO UPDATE SET
-                    doc_id = EXCLUDED.doc_id,
-                    doc_version = EXCLUDED.doc_version,
-                    content = EXCLUDED.content,
-                    token_count = EXCLUDED.token_count,
-                    embedding = EXCLUDED.embedding,
-                    metadata = EXCLUDED.metadata
-                """,
-                (
-                    chunk.chunk_id, chunk.doc_id, chunk.doc_version,
-                    chunk.content, chunk.token_count, embedding_str,
-                    json.dumps(chunk.metadata),
-                ),
-            )
-            count += 1
-        await conn.commit()
-    logger.info("chunks_upserted", count=count)
-    return count
+    """Upsert chunks into Qdrant. Skip chunks with no embedding. Return count."""
+    client = _get_client()
+    settings = get_settings()
+
+    points = []
+    for chunk in chunks:
+        if chunk.embedding is None:
+            continue
+        points.append(_chunk_to_point(chunk))
+
+    if not points:
+        return 0
+
+    # Batch upsert (Qdrant handles batching internally)
+    client.upsert(
+        collection_name=settings.qdrant_collection,
+        points=points,
+    )
+
+    logger.info("chunks_upserted", count=len(points))
+    return len(points)
 
 
 async def delete_chunks_for_document(doc_id: str) -> int:
-    """Delete all chunks for a document. Return rowcount."""
-    async with get_conn() as conn:
-        result = await conn.execute(
-            "DELETE FROM kb_chunks WHERE doc_id = %s", (doc_id,)
-        )
-        await conn.commit()
-        rowcount = result.rowcount
-    logger.info("chunks_deleted", doc_id=doc_id, count=rowcount)
-    return rowcount
+    """Delete all chunks for a document. Return count."""
+    client = _get_client()
+    settings = get_settings()
+
+    # Find all chunks for this document
+    results, _ = client.scroll(
+        collection_name=settings.qdrant_collection,
+        scroll_filter=Filter(
+            must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+        ),
+        limit=10000,
+        with_payload=False,
+        with_vectors=False,
+    )
+
+    if not results:
+        return 0
+
+    point_ids = [point.id for point in results]
+    client.delete(
+        collection_name=settings.qdrant_collection,
+        points_selector=PointIdsList(points=point_ids),
+    )
+
+    logger.info("chunks_deleted", doc_id=doc_id, count=len(point_ids))
+    return len(point_ids)
 
 
 async def similarity_search(
@@ -147,158 +226,140 @@ async def similarity_search(
     metadata_filter: dict | None = None,
     exclude_deprecated: bool = True,
 ) -> list[KBChunk]:
-    """Search for similar chunks using cosine distance.
+    """Search for similar chunks using cosine similarity.
 
     Args:
         query_embedding: Query embedding vector.
         top_k: Number of results to return.
-        metadata_filter: Optional JSONB filter (key-value pairs).
-        exclude_deprecated: Exclude deprecated documents.
+        metadata_filter: Optional key-value filter on payload fields.
+        exclude_deprecated: Exclude chunks marked as deprecated.
 
     Returns:
         List of KBChunk with similarity in metadata["_similarity"].
     """
-    embedding_str = "[" + ",".join(str(f) for f in query_embedding) + "]"
+    client = _get_client()
+    settings = get_settings()
 
-    where_clauses: list[str] = []
-    params: list = [embedding_str]
-
-    if exclude_deprecated:
-        where_clauses.append(
-            "NOT EXISTS (SELECT 1 FROM kb_documents d WHERE d.doc_id = c.doc_id AND d.deprecated = TRUE)"
-        )
-
-    if metadata_filter:
-        for key, value in metadata_filter.items():
-            params.append(key)
-            params.append(value)
-            where_clauses.append(f"c.metadata ->> %s = %s")
-
-    where_sql = " AND ".join(where_clauses) if where_clauses else "TRUE"
-    params.append(top_k)
-
-    sql = f"""
-        SELECT c.chunk_id, c.doc_id, c.doc_version, c.content,
-               c.token_count, c.embedding, c.metadata,
-               1 - (c.embedding <=> %s::vector) AS similarity
-        FROM kb_chunks c
-        WHERE {where_sql}
-        ORDER BY c.embedding <=> %s::vector
-        LIMIT %s
-    """
-    # Fix params order: embedding for distance, then where params, then embedding for order, then limit
-    # Rebuild with correct param order
-    distance_params = [embedding_str]
-    where_params: list = []
+    # Build Qdrant filter
+    conditions = []
 
     if exclude_deprecated:
-        pass  # no params needed
-
-    if metadata_filter:
-        for key, value in metadata_filter.items():
-            where_params.append(key)
-            where_params.append(value)
-
-    all_params = distance_params + where_params + distance_params + [top_k]
-
-    sql = f"""
-        SELECT c.chunk_id, c.doc_id, c.doc_version, c.content,
-               c.token_count, c.metadata,
-               1 - (c.embedding <=> %s::vector) AS similarity
-        FROM kb_chunks c
-        {("WHERE " + where_sql) if where_clauses else ""}
-        ORDER BY c.embedding <=> %s::vector
-        LIMIT %s
-    """
-
-    # Simpler approach: build the full SQL with proper param ordering
-    query_params: list = [embedding_str]
-
-    where_parts: list[str] = []
-    if exclude_deprecated:
-        where_parts.append(
-            "NOT EXISTS (SELECT 1 FROM kb_documents d WHERE d.doc_id = c.doc_id AND d.deprecated = TRUE)"
-        )
-    if metadata_filter:
-        for key, value in metadata_filter.items():
-            where_parts.append(f"c.metadata ->> %s = %s")
-            query_params.extend([key, value])
-
-    where_clause = " WHERE " + " AND ".join(where_parts) if where_parts else ""
-
-    final_sql = f"""
-        SELECT c.chunk_id, c.doc_id, c.doc_version, c.content,
-               c.token_count, c.metadata,
-               1 - (c.embedding <=> %s::vector) AS similarity
-        FROM kb_chunks c
-        {where_clause}
-        ORDER BY c.embedding <=> %s::vector
-        LIMIT %s
-    """
-    query_params.extend([embedding_str, top_k])
-
-    async with get_conn() as conn:
-        rows = await conn.execute(final_sql, query_params)
-        results = []
-        for row in rows:
-            chunk = KBChunk(
-                chunk_id=row["chunk_id"],
-                doc_id=row["doc_id"],
-                doc_version=row["doc_version"],
-                content=row["content"],
-                token_count=row["token_count"],
-                metadata={**(row["metadata"] or {}), "_similarity": row["similarity"]},
+        # Exclude deprecated documents — match deprecated != True
+        conditions.append(
+            FieldCondition(
+                key="deprecated",
+                match=MatchValue(value=True),
             )
-            results.append(chunk)
+        )
 
-    logger.info("similarity_search", results=len(results), top_k=top_k)
-    return results
+    if metadata_filter:
+        for key, value in metadata_filter.items():
+            conditions.append(
+                FieldCondition(key=key, match=MatchValue(value=value))
+            )
+
+    # Build filter: deprecated chunks are excluded with must_not
+    search_filter = None
+    if exclude_deprecated and metadata_filter:
+        search_filter = Filter(
+            must_not=[
+                FieldCondition(key="deprecated", match=MatchValue(value=True))
+            ],
+            must=[
+                FieldCondition(key=k, match=MatchValue(value=v))
+                for k, v in metadata_filter.items()
+            ],
+        )
+    elif exclude_deprecated:
+        search_filter = Filter(
+            must_not=[
+                FieldCondition(key="deprecated", match=MatchValue(value=True))
+            ]
+        )
+    elif metadata_filter:
+        search_filter = Filter(
+            must=[
+                FieldCondition(key=k, match=MatchValue(value=v))
+                for k, v in metadata_filter.items()
+            ]
+        )
+
+    # Execute search
+    results = client.search(
+        collection_name=settings.qdrant_collection,
+        query_vector=query_embedding,
+        limit=top_k,
+        query_filter=search_filter,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    chunks = []
+    for result in results:
+        chunk = _point_to_chunk(result, similarity=result.score)
+        chunks.append(chunk)
+
+    logger.info("similarity_search", results=len(chunks), top_k=top_k)
+    return chunks
 
 
 async def get_chunk_by_id(chunk_id: str) -> KBChunk | None:
-    """Retrieve a single chunk by ID."""
-    async with get_conn() as conn:
-        rows = await conn.execute(
-            "SELECT chunk_id, doc_id, doc_version, content, token_count, metadata FROM kb_chunks WHERE chunk_id = %s",
-            (chunk_id,),
-        )
-        row = rows.fetchone() if hasattr(rows, "fetchone") else None
-        # psycopg v3 returns cursor-like results
-        async with get_conn() as conn2:
-            cur = await conn2.execute(
-                "SELECT chunk_id, doc_id, doc_version, content, token_count, metadata FROM kb_chunks WHERE chunk_id = %s",
-                (chunk_id,),
-            )
-            row = await cur.fetchone()
+    """Retrieve a single chunk by its chunk_id."""
+    client = _get_client()
+    settings = get_settings()
 
-    if not row:
+    # Search by chunk_id in payload
+    results, _ = client.scroll(
+        collection_name=settings.qdrant_collection,
+        scroll_filter=Filter(
+            must=[FieldCondition(key="chunk_id", match=MatchValue(value=chunk_id))]
+        ),
+        limit=1,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    if not results:
         return None
 
-    return KBChunk(
-        chunk_id=row["chunk_id"],
-        doc_id=row["doc_id"],
-        doc_version=row["doc_version"],
-        content=row["content"],
-        token_count=row["token_count"],
-        metadata=row["metadata"] or {},
-    )
+    return _point_to_chunk(results[0])
 
 
 async def get_stats() -> dict[str, int]:
     """Return knowledge base statistics."""
-    async with get_conn() as conn:
-        cur = await conn.execute(
-            """
-            SELECT
-                (SELECT COUNT(*) FROM kb_documents WHERE NOT deprecated) AS active_documents,
-                (SELECT COUNT(*) FROM kb_chunks) AS total_chunks,
-                (SELECT COUNT(*) FROM kb_documents WHERE deprecated) AS deprecated_documents
-            """
+    client = _get_client()
+    settings = get_settings()
+
+    # Total chunks
+    total = client.count(collection_name=settings.qdrant_collection).count
+
+    # Active documents (unique doc_ids where deprecated != True)
+    # Qdrant doesn't have DISTINCT, so we scroll and count unique doc_ids
+    active_docs: set[str] = set()
+    deprecated_docs: set[str] = set()
+
+    offset = None
+    while True:
+        results, next_offset = client.scroll(
+            collection_name=settings.qdrant_collection,
+            limit=1000,
+            offset=offset,
+            with_payload=["doc_id", "deprecated"],
+            with_vectors=False,
         )
-        row = await cur.fetchone()
+        for point in results:
+            payload = point.payload or {}
+            doc_id = payload.get("doc_id", "")
+            if payload.get("deprecated", False):
+                deprecated_docs.add(doc_id)
+            else:
+                active_docs.add(doc_id)
+        if next_offset is None:
+            break
+        offset = next_offset
 
     return {
-        "active_documents": row["active_documents"],
-        "total_chunks": row["total_chunks"],
-        "deprecated_documents": row["deprecated_documents"],
+        "active_documents": len(active_docs),
+        "total_chunks": total,
+        "deprecated_documents": len(deprecated_docs),
     }

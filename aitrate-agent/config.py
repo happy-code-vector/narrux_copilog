@@ -18,14 +18,23 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # ─── Database ───────────────────────────────────────────
-    database_url: str = Field(
-        default="postgresql://narrux:narrux_dev@localhost:5432/aitrate",
-        description="PostgreSQL connection string",
+    # ─── Vector Store (Qdrant) ─────────────────────────────────
+    qdrant_url: str = Field(
+        default="http://localhost:6333",
+        description="Qdrant server URL (Docker mode)",
     )
-    postgres_user: str = Field(default="narrux")
-    postgres_password: str = Field(default="narrux_dev")
-    postgres_db: str = Field(default="aitrate")
+    qdrant_path: str = Field(
+        default="./qdrant_data",
+        description="Path for Qdrant embedded storage (local dev fallback)",
+    )
+    qdrant_collection: str = Field(
+        default="kb_chunks",
+        description="Qdrant collection name for KB chunks",
+    )
+    qdrant_mode: str = Field(
+        default="server",
+        description="Qdrant mode: 'server' (Docker) or 'embedded' (local)",
+    )
 
     # ─── Redis ──────────────────────────────────────────────
     redis_url: str = Field(default="redis://localhost:6379/0")

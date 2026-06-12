@@ -20,9 +20,9 @@ from retrieval.embeddings import embed_query
 from retrieval.ingestion import _build_source_registry, ingest_all_project_documents, ingest_document
 from retrieval.reranker import RankedChunk, ranked_chunks_to_citations, rerank
 from retrieval.vector_store import (
-    close_pool,
+    close_client,
     get_stats,
-    init_pool,
+    init_client,
     similarity_search,
 )
 
@@ -47,7 +47,7 @@ async def main():
     if not any([args.all, args.doc_id, args.stats, args.test_query]):
         parser.error("Specify one of: --all, --doc-id, --stats, --test-query")
 
-    await init_pool()
+    init_client()
 
     try:
         if args.all:
@@ -59,7 +59,7 @@ async def main():
         elif args.test_query:
             await cmd_test_query(args.test_query)
     finally:
-        await close_pool()
+        close_client()
 
 
 async def cmd_ingest_all(project_docs_path: str):

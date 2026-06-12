@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from retrieval.vector_store import close_pool, get_stats, init_pool
+from retrieval.vector_store import close_client, get_stats, init_client
 
 settings = get_settings()
 
@@ -37,10 +37,10 @@ logger = structlog.get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan — startup and shutdown."""
     logger.info("starting_aitrate_agent", environment=settings.environment)
-    await init_pool()
-    logger.info("db_pool_initialised")
+    init_client()
+    logger.info("qdrant_initialised")
     yield
-    await close_pool()
+    close_client()
     logger.info("shutting_down_aitrate_agent")
 
 

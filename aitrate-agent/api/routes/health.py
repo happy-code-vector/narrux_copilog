@@ -3,7 +3,7 @@
 import structlog
 from fastapi import APIRouter
 
-from retrieval.vector_store import get_stats, get_conn
+from retrieval.vector_store import get_stats
 
 logger = structlog.get_logger(__name__)
 
