@@ -1,12 +1,18 @@
-"""Voyage AI rerank-2 wrapper.
+"""Reranker wrapper — supports Voyage AI and local cross-encoder.
+
+Provider is selected by settings.reranker_provider:
+- 'voyage': uses Voyage AI rerank-2 (API)
+- 'local': uses sentence-transformers cross-encoder (offline)
+- 'none': skip reranking, return top chunks by vector similarity
 
 NO pydantic_ai imports. Pure Python.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import structlog
-import voyageai
 
 from config import get_settings
 from tools.schemas import Citation
@@ -23,15 +29,89 @@ class RankedChunk:
     rank: int
 
 
+# ─── Local Cross-Encoder ────────────────────────────────────────────────────
+
+_local_reranker = None
+
+
+def _get_local_reranker():
+    """Lazy-load the local cross-encoder model."""
+    global _local_reranker
+    if _local_reranker is None:
+        from sentence_transformers import CrossEncoder
+
+        logger.info("loading_local_reranker")
+        _local_reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        logger.info("local_reranker_loaded")
+    return _local_reranker
+
+
+def _rerank_local(query: str, chunks: list, top_n: int) -> list[RankedChunk]:
+    """Rerank using local cross-encoder model."""
+    model = _get_local_reranker()
+    settings = get_settings()
+
+    # Build query-document pairs
+    pairs = [[query, c.content] for c in chunks]
+    scores = model.predict(pairs)
+
+    # Sort by score descending
+    scored = sorted(zip(chunks, scores), key=lambda x: x[1], reverse=True)
+
+    ranked = []
+    for i, (chunk, score) in enumerate(scored[:top_n]):
+        if float(score) < settings.min_rerank_score:
+            continue
+        ranked.append(RankedChunk(chunk=chunk, score=float(score), rank=i + 1))
+
+    return ranked
+
+
+# ─── Voyage AI Reranker ─────────────────────────────────────────────────────
+
+async def _rerank_voyage(query: str, chunks: list, top_n: int) -> list[RankedChunk]:
+    """Rerank using Voyage AI rerank-2."""
+    import voyageai
+
+    settings = get_settings()
+    client = voyageai.AsyncClient(api_key=settings.voyage_api_key)
+    documents = [c.content for c in chunks]
+
+    result = await client.rerank(
+        query=query,
+        documents=documents,
+        model=settings.voyage_rerank_model,
+        top_k=top_n,
+    )
+
+    ranked = []
+    for i, item in enumerate(result.results):
+        if item.relevance_score < settings.min_rerank_score:
+            continue
+        ranked.append(
+            RankedChunk(
+                chunk=chunks[item.index],
+                score=item.relevance_score,
+                rank=i + 1,
+            )
+        )
+
+    return ranked
+
+
+# ─── Public API ─────────────────────────────────────────────────────────────
+
 async def rerank(
     query: str,
     chunks: list,
     top_n: int | None = None,
 ) -> list[RankedChunk]:
-    """Rerank chunks by relevance to query using Voyage rerank-2.
+    """Rerank chunks by relevance to query.
 
-    Filters by min_rerank_score from settings.
-    If nothing passes the threshold, returns empty list (citations-or-silence gate).
+    Uses provider based on settings.reranker_provider:
+    - 'voyage': Voyage AI rerank-2
+    - 'local': sentence-transformers cross-encoder
+    - 'none': skip reranking, return top chunks by vector similarity score
 
     Args:
         query: Query string.
@@ -48,44 +128,28 @@ async def rerank(
     if top_n is None:
         top_n = settings.rerank_top_n
 
-    client = voyageai.AsyncClient(api_key=settings.voyage_api_key)
-    documents = [c.content for c in chunks]
+    provider = settings.reranker_provider
 
     logger.info(
         "reranking",
         query=query[:100],
         input_count=len(chunks),
         top_n=top_n,
-        model=settings.voyage_rerank_model,
+        provider=provider,
     )
 
-    result = await client.rerank(
-        query=query,
-        documents=documents,
-        model=settings.voyage_rerank_model,
-        top_k=top_n,
-    )
-
-    ranked: list[RankedChunk] = []
-    dropped = 0
-    for i, item in enumerate(result.results):
-        if item.relevance_score < settings.min_rerank_score:
-            dropped += 1
-            continue
-        ranked.append(
-            RankedChunk(
-                chunk=chunks[item.index],
-                score=item.relevance_score,
-                rank=i + 1,
-            )
-        )
-
-    if dropped > 0:
-        logger.info(
-            "rerank_dropped_by_threshold",
-            dropped=dropped,
-            min_score=settings.min_rerank_score,
-        )
+    if provider == "none":
+        # Skip reranking — use vector similarity scores
+        ranked = []
+        for i, chunk in enumerate(chunks[:top_n]):
+            score = chunk.metadata.get("_similarity", 0.0)
+            if score < settings.min_rerank_score:
+                continue
+            ranked.append(RankedChunk(chunk=chunk, score=score, rank=i + 1))
+    elif provider == "local":
+        ranked = _rerank_local(query, chunks, top_n)
+    else:
+        ranked = await _rerank_voyage(query, chunks, top_n)
 
     if not ranked:
         logger.warning("rerank_nothing_passed_threshold — agent must abstain")

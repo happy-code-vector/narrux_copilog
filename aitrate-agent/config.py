@@ -84,6 +84,10 @@ class Settings(BaseSettings):
     retrieval_top_k: int = Field(default=20)
     rerank_top_n: int = Field(default=5)
     min_rerank_score: float = Field(default=0.3)
+    reranker_provider: str = Field(
+        default="none",
+        description="Reranker provider: 'voyage', 'local', or 'none'",
+    )
 
     # ─── Ingestion ──────────────────────────────────────────
     chunk_size_tokens: int = Field(default=400)

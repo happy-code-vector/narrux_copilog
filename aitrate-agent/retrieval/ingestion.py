@@ -1,10 +1,4 @@
 """KB document ingestion pipeline.
-
-CRITICAL FACT: All project documents are ZIP archives with .pdf extensions.
-Magic bytes: PK\\x03\\x04. They contain N.txt files (one per page) and N.jpeg files.
-The pipeline must detect this with _is_zip_archive() checking file magic bytes,
-NOT file extension.
-
 NO pydantic_ai imports. Pure Python.
 """
 
