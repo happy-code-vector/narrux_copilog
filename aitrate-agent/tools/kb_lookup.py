@@ -148,20 +148,49 @@ def get_filter_info(filter_id: str, strategy: str | None = None) -> dict | None:
     return None
 
 
+def _normalize(s: str) -> str:
+    """Lowercase and strip spaces for fuzzy comparison."""
+    return s.lower().replace(" ", "")
+
+
 def get_param_class(param_name: str, strategy: str = "alpha") -> ParameterClass | None:
     """Return Class A/B/C for a named parameter.
 
     Looks up the parameter in the glossary's parameter_classes section.
+    Uses a priority match: exact > param-in-member > member-in-param.
+    Spaces are stripped before comparison so "bbWidth" matches "BB width".
+    When multiple matches exist in the same tier, the longest member wins
+    (most specific match).
     """
     glossary = _load_glossary()
     param_classes = glossary.get("parameter_classes", {})
 
-    name_lower = param_name.lower()
+    name_norm = _normalize(param_name)
 
+    # Build list of (member_normalized, member_original, class_letter) triples
+    candidates: list[tuple[str, str, str]] = []
     for cls_letter, cls_info in param_classes.items():
         for member in cls_info.get("members", []):
-            if name_lower in member.lower() or member.lower() in name_lower:
-                return ParameterClass(cls_letter)
+            candidates.append((_normalize(member), member, cls_letter))
+
+    # Pass 1: Exact match (normalized)
+    exact = [(m, c) for mn, m, c in candidates if name_norm == mn]
+    if exact:
+        return ParameterClass(exact[0][1])
+
+    # Pass 2: Param name is substring of member (e.g., "bb" in "bbwidth")
+    # Prefer longest member (most specific match)
+    param_in_member = [(m, c) for mn, m, c in candidates if name_norm in mn]
+    if param_in_member:
+        param_in_member.sort(key=lambda x: len(x[0]), reverse=True)
+        return ParameterClass(param_in_member[0][1])
+
+    # Pass 3: Member is substring of param name (e.g., "cvd" in "cvdlongthresholdls")
+    # Prefer longest member (most specific match)
+    member_in_param = [(m, c) for mn, m, c in candidates if mn in name_norm]
+    if member_in_param:
+        member_in_param.sort(key=lambda x: len(x[0]), reverse=True)
+        return ParameterClass(member_in_param[0][1])
 
     return None
 
