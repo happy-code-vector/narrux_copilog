@@ -76,7 +76,7 @@ def _ensure_collection() -> None:
         client.create_collection(
             collection_name=collection,
             vectors_config=VectorParams(
-                size=1024,  # voyage-3-large dimensions
+                size=settings.embedding_dims,
                 distance=Distance.COSINE,
             ),
         )

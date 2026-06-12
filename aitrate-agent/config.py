@@ -48,7 +48,21 @@ class Settings(BaseSettings):
         default="claude-sonnet-4-6", description="Secondary LLM for F-03, F-05"
     )
 
-    # ─── Voyage AI ──────────────────────────────────────────
+    # ─── Embedding Model ─────────────────────────────────────
+    embedding_provider: str = Field(
+        default="local",
+        description="Embedding provider: 'local' (sentence-transformers) or 'voyage' (API)",
+    )
+    embedding_model: str = Field(
+        default="BAAI/bge-large-en-v1.5",
+        description="Embedding model name (local model or Voyage model)",
+    )
+    embedding_dims: int = Field(
+        default=1024,
+        description="Embedding dimensions (must match model)",
+    )
+
+    # ─── Voyage AI (production) ──────────────────────────────
     voyage_api_key: str = Field(default="pa-xxx")
     voyage_embedding_model: str = Field(default="voyage-3-large")
     voyage_rerank_model: str = Field(default="rerank-2")
