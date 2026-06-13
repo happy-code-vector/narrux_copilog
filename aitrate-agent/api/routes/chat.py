@@ -24,7 +24,7 @@ class ChatRequest(BaseModel):
     message: str
     user_id: str = "api-user"
     metadata_filter: dict | None = None
-    adapter: str = "pydantic_ai"
+    adapter: str = "gemini"
 
 
 class CitationResponse(BaseModel):
