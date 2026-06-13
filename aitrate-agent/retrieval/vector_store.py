@@ -172,11 +172,18 @@ async def upsert_chunks(chunks: list[KBChunk]) -> int:
     client = _get_client()
     settings = get_settings()
 
+    logger.debug("upsert_chunks_start", input_count=len(chunks))
+
     points = []
+    skipped = 0
     for chunk in chunks:
         if chunk.embedding is None:
+            skipped += 1
             continue
         points.append(_chunk_to_point(chunk))
+
+    if skipped > 0:
+        logger.warning("chunks_skipped_no_embedding", skipped=skipped, total=len(chunks))
 
     if not points:
         return 0

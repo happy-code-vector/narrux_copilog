@@ -73,27 +73,30 @@ GEMINI_BATCH_LIMIT = 100
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 async def _embed_gemini(texts: Sequence[str], task_type: str = "RETRIEVAL_DOCUMENT") -> list[list[float]]:
-    """Embed texts using Google Gemini API."""
+    """Embed texts using Google Gemini API.
+
+    Note: google-genai v2.x requires one call per text (batch not supported).
+    """
     from google.genai.types import EmbedContentConfig
 
     client = _get_gemini_client()
     settings = get_settings()
     all_embeddings: list[list[float]] = []
 
-    for i in range(0, len(texts), GEMINI_BATCH_LIMIT):
-        batch = texts[i : i + GEMINI_BATCH_LIMIT]
-        logger.info(
-            "embedding_batch",
-            batch_start=i,
-            batch_size=len(batch),
-            model=settings.embedding_model,
-        )
+    logger.info(
+        "embedding_batch",
+        count=len(texts),
+        model=settings.embedding_model,
+    )
+
+    # google-genai v2.x: one call per text
+    for text in texts:
         result = client.models.embed_content(
             model=settings.embedding_model,
-            contents=batch,
+            contents=text,
             config=EmbedContentConfig(task_type=task_type),
         )
-        all_embeddings.extend([e.values for e in result.embeddings])
+        all_embeddings.append(result.embeddings[0].values)
 
     return all_embeddings
 

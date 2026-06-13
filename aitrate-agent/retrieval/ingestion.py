@@ -397,6 +397,8 @@ async def ingest_document(source: IngestionSource, force_reingest: bool = False)
     texts = [c.content for c in raw_chunks]
     embeddings = await embed_documents(texts)
 
+    logger.debug("embedding_result", raw_chunks=len(raw_chunks), embeddings=len(embeddings))
+
     # Step 6: Build KBChunk objects
     kb_chunks: list[KBChunk] = []
     for i, (raw, embedding) in enumerate(zip(raw_chunks, embeddings)):
@@ -412,6 +414,8 @@ async def ingest_document(source: IngestionSource, force_reingest: bool = False)
                 metadata=raw.metadata,
             )
         )
+
+    logger.debug("kb_chunks_built", count=len(kb_chunks))
 
     # Step 7: Upsert
     count = await upsert_chunks(kb_chunks)
