@@ -116,9 +116,9 @@ class GeminiAdapter:
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Generate a completion using Gemini API."""
-        from google.genai.types import GenerateContentConfig
+        from google.genai.types import GenerateContentConfig, ThinkingConfig
 
-        model = request.model or "gemini-2.0-flash"
+        model = request.model or "gemini-2.5-flash"
         max_tokens = request.max_tokens or self._settings.max_tokens_per_response
 
         # Build context block
@@ -129,14 +129,19 @@ class GeminiAdapter:
 
         logger.info("gemini_complete", model=model)
 
+        # Disable thinking for Gemini 2.5 models (thinking consumes output tokens)
+        config_kwargs = {
+            "system_instruction": request.system_prompt,
+            "max_output_tokens": max_tokens,
+            "temperature": request.temperature,
+        }
+        if "2.5" in model:
+            config_kwargs["thinking_config"] = ThinkingConfig(thinking_budget=0)
+
         response = self._client.models.generate_content(
             model=model,
             contents=full_message,
-            config=GenerateContentConfig(
-                system_instruction=request.system_prompt,
-                max_output_tokens=max_tokens,
-                temperature=request.temperature,
-            ),
+            config=GenerateContentConfig(**config_kwargs),
         )
 
         content = response.text or ""

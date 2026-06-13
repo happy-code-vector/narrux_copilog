@@ -87,6 +87,26 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100
 .confidence.high { background: var(--color-background-success); color: var(--color-text-success); }
 .confidence.abstain { background: var(--color-background-warning); color: var(--color-text-warning); }
 
+/* Markdown content styles */
+.msg .content h2 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--color-text-primary); }
+.msg .content h3 { font-size: 14px; font-weight: 600; margin: 14px 0 6px; color: var(--color-text-primary); }
+.msg .content h4 { font-size: 13px; font-weight: 600; margin: 12px 0 4px; color: var(--color-text-primary); }
+
+/* Content sections (e.g. **Answer:**, **Logic:**) */
+.content-section { margin: 10px 0; padding: 10px 12px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); border-left: 3px solid #185FA5; }
+.content-section .section-header { font-size: 13px; font-weight: 600; margin-bottom: 4px; color: var(--color-text-primary); }
+.content-section .section-body { font-size: 13px; line-height: 1.6; color: var(--color-text-secondary); }
+.content-section .section-body p { margin: 0; }
+.msg .content ul, .msg .content ol { margin: 8px 0; padding-left: 20px; }
+.msg .content li { margin: 4px 0; line-height: 1.5; }
+.msg .content hr { border: none; border-top: 0.5px solid var(--color-border-tertiary); margin: 12px 0; }
+.msg .content strong { font-weight: 600; }
+.msg .content em { font-style: italic; }
+.msg .content table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+.msg .content table th { background: var(--color-background-secondary); font-weight: 500; text-align: left; padding: 8px 10px; border: 0.5px solid var(--color-border-tertiary); }
+.msg .content table td { padding: 6px 10px; border: 0.5px solid var(--color-border-tertiary); }
+.msg .content table tr:hover { background: var(--color-background-secondary); }
+
 /* Loading indicator */
 .loading { display: flex; gap: 10px; align-items: center; padding: 12px 0; }
 .loading .dot { width: 8px; height: 8px; border-radius: 50%; background: #185FA5; animation: bounce 1.4s infinite ease-in-out both; }
@@ -398,24 +418,120 @@ function updateCitationsSidebar(citations) {
 
 function formatContent(text) {
   if (!text) return '';
-  // Basic markdown-like formatting
-  let html = escapeHtml(text);
-  // Bold
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  // Code blocks
-  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Headers
-  html = html.replace(/^### (.*$)/gm, '<h4 style="margin: 12px 0 4px; font-size: 13px;">$1</h4>');
-  html = html.replace(/^## (.*$)/gm, '<h3 style="margin: 12px 0 4px; font-size: 14px;">$1</h3>');
-  // Lists
-  html = html.replace(/^- (.*$)/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
-  // Paragraphs
-  html = html.replace(/\n\n/g, '</p><p>');
-  html = '<p>' + html + '</p>';
+
+  // Process code blocks first (preserve content)
+  const codeBlocks = [];
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<pre><code class="language-${lang || 'text'}">${escapeHtml(code.trim())}</code></pre>`);
+    return `__CODE_BLOCK_${idx}__`;
+  });
+
+  // Process tables
+  const tables = [];
+  text = text.replace(/(\|.+\|[\n\r]+\|[-| :]+\|[\n\r]+(?:\|.+\|[\n\r]*)+)/g, (match) => {
+    const rows = match.trim().split('\n');
+    let html = '<table>';
+    rows.forEach((row, i) => {
+      if (row.match(/^\|[-| :]+\|$/)) return; // separator row
+      const cells = row.split('|').filter(c => c.trim() !== '');
+      const tag = i === 0 ? 'th' : 'td';
+      html += '<tr>' + cells.map(c => `<${tag}>${inlineFormat(c.trim())}</${tag}>`).join('') + '</tr>';
+    });
+    html += '</table>';
+    const idx = tables.length;
+    tables.push(html);
+    return `__TABLE_${idx}__`;
+  });
+
+  // Split into blocks by double newline first
+  let blocks = text.split(/\n\n+/);
+
+  // Further split blocks that contain section headers separated by single newlines
+  // Pattern: lines starting with **Section:** or **Section** or ## Header
+  const sectionHeaderRe = /^(?:\*\*[A-Z][^*]+\*\*:?|#{1,4}\s)/;
+  const expandedBlocks = [];
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    // Check if block has multiple section-style headers on separate lines
+    const hasMultipleSections = lines.filter(l => sectionHeaderRe.test(l.trim())).length > 1;
+    if (hasMultipleSections) {
+      // Split on each section header line
+      let current = [];
+      for (const line of lines) {
+        if (sectionHeaderRe.test(line.trim()) && current.length > 0) {
+          expandedBlocks.push(current.join('\n'));
+          current = [line];
+        } else {
+          current.push(line);
+        }
+      }
+      if (current.length > 0) expandedBlocks.push(current.join('\n'));
+    } else {
+      expandedBlocks.push(block);
+    }
+  }
+  blocks = expandedBlocks;
+
+  let html = blocks.map(block => {
+    block = block.trim();
+    if (!block) return '';
+
+    // Code block placeholder
+    const codeMatch = block.match(/^__CODE_BLOCK_(\d+)__$/);
+    if (codeMatch) return codeBlocks[parseInt(codeMatch[1])];
+
+    // Table placeholder
+    const tableMatch = block.match(/^__TABLE_(\d+)__$/);
+    if (tableMatch) return tables[parseInt(tableMatch[1])];
+
+    // Headers (markdown)
+    if (block.startsWith('### ')) return `<h4>${inlineFormat(block.slice(4))}</h4>`;
+    if (block.startsWith('## ')) return `<h3>${inlineFormat(block.slice(3))}</h3>`;
+    if (block.startsWith('# ')) return `<h2>${inlineFormat(block.slice(2))}</h2>`;
+
+    // Horizontal rule
+    if (block.match(/^[-*_]{3,}$/)) return '<hr>';
+
+    // Unordered list
+    if (block.match(/^- /m)) {
+      const items = block.split('\n').filter(l => l.startsWith('- '));
+      return '<ul>' + items.map(l => `<li>${inlineFormat(l.slice(2))}</li>`).join('') + '</ul>';
+    }
+
+    // Ordered list
+    if (block.match(/^\d+\. /m)) {
+      const items = block.split('\n').filter(l => l.match(/^\d+\. /));
+      return '<ol>' + items.map(l => `<li>${inlineFormat(l.replace(/^\d+\. /, ''))}</li>`).join('') + '</ol>';
+    }
+
+    // Section block: first line is a bold header, rest is content
+    const lines = block.split('\n');
+    if (lines.length > 0 && sectionHeaderRe.test(lines[0].trim())) {
+      const header = lines[0].trim();
+      const body = lines.slice(1).join('\n').trim();
+      const headerHtml = inlineFormat(header);
+      const bodyHtml = body ? `<div class="section-body">${inlineFormat(body)}</div>` : '';
+      return `<div class="content-section"><div class="section-header">${headerHtml}</div>${bodyHtml}</div>`;
+    }
+
+    // Paragraph
+    return `<p>${inlineFormat(block)}</p>`;
+  }).join('');
+
   return html;
+}
+
+function inlineFormat(text) {
+  // Bold
+  text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  text = text.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Inline code
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Line breaks within blocks
+  text = text.replace(/\n/g, '<br>');
+  return text;
 }
 
 function escapeHtml(text) {
