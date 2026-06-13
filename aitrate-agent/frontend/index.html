@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aiTrate Co-Pilot</title>
+<style>
+:root {
+  --color-background-primary: #ffffff;
+  --color-background-secondary: #f4f3f0;
+  --color-background-tertiary: #ebeae5;
+  --color-background-info: #e6f1fb;
+  --color-background-danger: #fceaea;
+  --color-background-success: #e1f5ee;
+  --color-background-warning: #faeeda;
+  --color-text-primary: #1a1a18;
+  --color-text-secondary: #5f5e5a;
+  --color-text-tertiary: #888780;
+  --color-text-info: #0c447c;
+  --color-text-danger: #791f1f;
+  --color-text-success: #04342c;
+  --color-text-warning: #633806;
+  --color-border-tertiary: rgba(0,0,0,0.10);
+  --color-border-secondary: rgba(0,0,0,0.18);
+  --color-border-primary: rgba(0,0,0,0.28);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: var(--font-sans); color: var(--color-text-primary); background: #fafaf7; line-height: 1.55; -webkit-font-smoothing: antialiased; height: 100%; }
+body { display: flex; }
+
+/* Sidebar */
+aside.nav { width: 220px; flex-shrink: 0; background: #1a1a18; color: #e8e6e0; padding: 18px 0; height: 100vh; overflow-y: auto; }
+aside.nav .brand { font-size: 16px; font-weight: 500; padding: 0 18px 16px; letter-spacing: 0.5px; border-bottom: 0.5px solid rgba(255,255,255,0.08); }
+aside.nav .brand small { display: block; font-size: 11px; color: #888780; font-weight: 400; margin-top: 2px; }
+aside.nav .group { padding: 12px 0 4px; }
+aside.nav .group-label { font-size: 10px; color: #888780; letter-spacing: 0.8px; padding: 4px 18px; }
+aside.nav a { display: flex; justify-content: space-between; align-items: center; padding: 7px 18px; font-size: 13px; color: #c8c6c0; text-decoration: none; border-left: 2px solid transparent; transition: all 0.1s ease; }
+aside.nav a:hover { background: rgba(255,255,255,0.04); color: #ffffff; }
+aside.nav a.active { background: rgba(55,138,221,0.12); color: #87b7eb; border-left-color: #378add; }
+
+/* Main */
+main { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; }
+.topbar { background: rgba(250,250,247,0.92); backdrop-filter: blur(10px); border-bottom: 0.5px solid var(--color-border-tertiary); padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+.topbar h1 { font-size: 14px; font-weight: 500; }
+.topbar .meta { font-size: 12px; color: var(--color-text-secondary); display: flex; gap: 8px; align-items: center; }
+.pill { font-size: 11px; padding: 2px 10px; border-radius: 10px; display: inline-block; }
+
+/* Content area */
+.content { display: flex; flex: 1; overflow: hidden; }
+
+/* Chat panel */
+.chat-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.chat-header { padding: 10px 16px; border-bottom: 0.5px solid var(--color-border-tertiary); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+.chat-header .session { font-size: 13px; font-weight: 500; }
+.chat-header .session-meta { font-size: 11px; color: var(--color-text-secondary); display: flex; gap: 8px; }
+
+.chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+/* Messages */
+.msg { display: flex; gap: 10px; }
+.msg .avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; flex-shrink: 0; }
+.msg.user .avatar { background: var(--color-background-secondary); color: var(--color-text-secondary); }
+.msg.assistant .avatar { background: #185FA5; color: #fff; }
+.msg .body { flex: 1; min-width: 0; }
+.msg .meta { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; }
+.msg .content { font-size: 13px; line-height: 1.6; }
+.msg .content p { margin-bottom: 8px; }
+.msg .content ul, .msg .content ol { margin: 8px 0; padding-left: 20px; }
+.msg .content code { font-family: var(--font-mono); font-size: 12px; background: var(--color-background-secondary); padding: 1px 4px; border-radius: 3px; }
+.msg .content pre { background: var(--color-background-secondary); padding: 10px; border-radius: var(--border-radius-md); overflow-x: auto; margin: 8px 0; }
+.msg .content pre code { background: none; padding: 0; }
+.msg .content table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
+.msg .content table th, .msg .content table td { padding: 6px 8px; border: 0.5px solid var(--color-border-tertiary); text-align: left; }
+.msg .content table th { background: var(--color-background-secondary); font-weight: 500; }
+
+/* Citations */
+.citations { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; padding: 8px 10px; background: var(--color-background-info); border-radius: var(--border-radius-md); font-size: 11px; color: var(--color-text-info); }
+.citations span.label { font-weight: 500; margin-right: 4px; }
+.citations .pill { background: #fff; color: var(--color-text-info); font-size: 10px; }
+
+/* Confidence badge */
+.confidence { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+.confidence.high { background: var(--color-background-success); color: var(--color-text-success); }
+.confidence.abstain { background: var(--color-background-warning); color: var(--color-text-warning); }
+
+/* Loading indicator */
+.loading { display: flex; gap: 10px; align-items: center; padding: 12px 0; }
+.loading .dot { width: 8px; height: 8px; border-radius: 50%; background: #185FA5; animation: bounce 1.4s infinite ease-in-out both; }
+.loading .dot:nth-child(1) { animation-delay: -0.32s; }
+.loading .dot:nth-child(2) { animation-delay: -0.16s; }
+@keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+
+/* Input area */
+.chat-input { padding: 10px 16px; border-top: 0.5px solid var(--color-border-tertiary); display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.chat-input input { flex: 1; height: 36px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 0 12px; font-size: 13px; background: var(--color-background-primary); }
+.chat-input input:focus { outline: none; border-color: #185FA5; }
+.chat-input select { height: 36px; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 0 8px; font-size: 12px; background: var(--color-background-primary); }
+.chat-input button.send { height: 36px; padding: 0 16px; background: #185FA5; color: #fff; border: none; border-radius: var(--border-radius-md); font-weight: 500; cursor: pointer; }
+.chat-input button.send:hover { background: #1568b8; }
+.chat-input button.send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Sidebar panel */
+.sidebar-panel { width: 320px; flex-shrink: 0; border-left: 0.5px solid var(--color-border-tertiary); overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; background: var(--color-background-primary); }
+.sidebar-panel .card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 12px; }
+.sidebar-panel .card-title { font-size: 13px; font-weight: 500; margin-bottom: 8px; }
+.sidebar-panel .card-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+.sidebar-panel .card-row .label { color: var(--color-text-secondary); }
+.sidebar-panel .card-row .value { font-family: var(--font-mono); font-size: 11px; }
+
+/* Welcome screen */
+.welcome { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 16px; color: var(--color-text-secondary); }
+.welcome h2 { font-size: 20px; font-weight: 500; color: var(--color-text-primary); }
+.welcome p { font-size: 13px; max-width: 400px; text-align: center; }
+.welcome .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
+.welcome .suggestions button { font-size: 12px; padding: 6px 12px; height: auto; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); background: var(--color-background-primary); cursor: pointer; }
+.welcome .suggestions button:hover { background: var(--color-background-secondary); }
+
+/* Responsive */
+@media (max-width: 900px) {
+  aside.nav { display: none; }
+  .sidebar-panel { display: none; }
+}
+</style>
+</head>
+<body>
+
+<aside class="nav">
+  <div class="brand">aiTRATE.<small>Co-Pilot v1.0</small></div>
+  <div class="group">
+    <div class="group-label">AI AGENT</div>
+    <a href="#" class="active"><span>Co-Pilot Chat</span></a>
+    <a href="#" onclick="showKBStats()"><span>KB Stats</span></a>
+    <a href="#" onclick="showAuditLog()"><span>Audit Log</span></a>
+  </div>
+</aside>
+
+<main>
+  <div class="topbar">
+    <h1>aiTrate Co-Pilot</h1>
+    <div class="meta">
+      <span class="pill" style="background: var(--color-background-warning); color: #633806; font-weight: 500;">Shadow mode</span>
+      <span class="pill" style="background: var(--color-background-success); color: #04342C;" id="status-pill">Connected</span>
+      <span id="model-info" style="font-family: var(--font-mono);"></span>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="chat-panel">
+      <div class="chat-header">
+        <div class="session">Conversation</div>
+        <div class="session-meta">
+          <span id="session-id"></span>
+          <span id="user-info">Analyst</span>
+        </div>
+      </div>
+
+      <div class="chat-messages" id="chat-messages">
+        <div class="welcome" id="welcome">
+          <h2>aiTrate Co-Pilot</h2>
+          <p>Domain-specialised AI agent for your trading strategies. Ask about filters, audit backtests, or get parameter recommendations.</p>
+          <div class="suggestions">
+            <button onclick="sendSuggestion('What does the CVD filter do?')">What does CVD filter do?</button>
+            <button onclick="sendSuggestion('Explain the RSI corridor filter')">Explain RSI corridor</button>
+            <button onclick="sendSuggestion('What are the parameter classes A, B, C?')">Parameter classes</button>
+            <button onclick="sendSuggestion('How does the leverage framework work?')">Leverage framework</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-input">
+        <input type="text" id="user-input" placeholder="Ask about a strategy, filter, or parameter..." onkeydown="if(event.key==='Enter')sendMessage()">
+        <select id="function-select">
+          <option value="F-01">F-01 Explain</option>
+          <option value="F-02">F-02 Backtest</option>
+          <option value="F-03">F-03 TSI Score</option>
+          <option value="F-04">F-04 Recommend</option>
+          <option value="F-05">F-05 Drift</option>
+        </select>
+        <button class="send" id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+
+    <div class="sidebar-panel">
+      <div class="card">
+        <div class="card-title">Session Info</div>
+        <div class="card-row"><span class="label">Function</span><span class="value" id="info-function">F-01</span></div>
+        <div class="card-row"><span class="label">Messages</span><span class="value" id="info-messages">0</span></div>
+        <div class="card-row"><span class="label">Citations</span><span class="value" id="info-citations">0</span></div>
+      </div>
+
+      <div class="card" id="citations-card" style="display:none;">
+        <div class="card-title">Retrieved Sources</div>
+        <div id="citations-list" style="font-size: 12px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Knowledge Base</div>
+        <div id="kb-stats">
+          <div class="card-row"><span class="label">Documents</span><span class="value" id="kb-docs">—</span></div>
+          <div class="card-row"><span class="label">Chunks</span><span class="value" id="kb-chunks">—</span></div>
+          <div class="card-row"><span class="label">Vector DB</span><span class="value">Qdrant</span></div>
+          <div class="card-row"><span class="label">Embeddings</span><span class="value">Gemini</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Governance</div>
+        <div style="font-size: 11px; color: var(--color-text-secondary); line-height: 1.5;">
+          <b>Citations or silence.</b> Class A never on single backtest. Class B requires ≥3 backtests. Class C requires regime label.
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const API_BASE = 'http://localhost:8000';
+let messageCount = 0;
+let citationCount = 0;
+
+// Generate session ID
+document.getElementById('session-id').textContent = 'Session #' + Math.floor(Math.random() * 9000 + 1000);
+
+// Load KB stats on start
+loadKBStats();
+
+async function loadKBStats() {
+  try {
+    const resp = await fetch(`${API_BASE}/health/kb-stats`);
+    if (resp.ok) {
+      const data = await resp.json();
+      document.getElementById('kb-docs').textContent = data.active_documents || '—';
+      document.getElementById('kb-chunks').textContent = data.total_chunks?.toLocaleString() || '—';
+    }
+  } catch (e) {
+    console.log('KB stats not available');
+  }
+}
+
+function sendSuggestion(text) {
+  document.getElementById('user-input').value = text;
+  sendMessage();
+}
+
+async function sendMessage() {
+  const input = document.getElementById('user-input');
+  const message = input.value.trim();
+  if (!message) return;
+
+  const functionId = document.getElementById('function-select').value;
+  document.getElementById('info-function').textContent = functionId;
+
+  // Hide welcome
+  const welcome = document.getElementById('welcome');
+  if (welcome) welcome.style.display = 'none';
+
+  // Add user message
+  addMessage('user', message);
+  input.value = '';
+  messageCount++;
+  document.getElementById('info-messages').textContent = messageCount;
+
+  // Show loading
+  const loadingEl = addLoading();
+
+  // Disable send
+  document.getElementById('send-btn').disabled = true;
+
+  try {
+    const resp = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        function_id: functionId,
+        message: message,
+        user_id: 'frontend-user'
+      })
+    });
+
+    loadingEl.remove();
+
+    if (resp.ok) {
+      const data = await resp.json();
+      addAssistantMessage(data);
+    } else {
+      const err = await resp.json();
+      addErrorMessage(err.detail || 'Request failed');
+    }
+  } catch (e) {
+    loadingEl.remove();
+    addErrorMessage('Cannot connect to API. Is the server running?');
+  }
+
+  document.getElementById('send-btn').disabled = false;
+  input.focus();
+}
+
+function addMessage(role, content) {
+  const container = document.getElementById('chat-messages');
+  const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.innerHTML = `
+    <div class="avatar">${role === 'user' ? 'U' : '●'}</div>
+    <div class="body">
+      <div class="meta">${role === 'user' ? 'You' : 'Co-Pilot'} · ${now}</div>
+      <div class="content">${escapeHtml(content)}</div>
+    </div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addAssistantMessage(data) {
+  const container = document.getElementById('chat-messages');
+  const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+  // Format content (simple markdown-like)
+  let formattedContent = formatContent(data.content);
+
+  // Confidence badge
+  const confClass = data.confidence === 'high' ? 'high' : 'abstain';
+  const confLabel = data.confidence === 'high' ? '✓ grounded' : '⚠ abstained';
+
+  // Citations
+  let citationsHtml = '';
+  if (data.citations && data.citations.length > 0) {
+    citationCount += data.citations.length;
+    document.getElementById('info-citations').textContent = citationCount;
+
+    const pills = data.citations.map(c =>
+      `<span class="pill" title="${escapeHtml(c.doc_id)}">${escapeHtml(c.citation_handle)}</span>`
+    ).join('');
+    citationsHtml = `<div class="citations"><span class="label">Citations:</span>${pills}</div>`;
+
+    // Update sidebar citations
+    updateCitationsSidebar(data.citations);
+  }
+
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.innerHTML = `
+    <div class="avatar">●</div>
+    <div class="body">
+      <div class="meta">Co-Pilot · ${now} · ${data.function_id} <span class="confidence ${confClass}">${confLabel}</span></div>
+      <div class="content">${formattedContent}</div>
+      ${citationsHtml}
+    </div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addErrorMessage(text) {
+  const container = document.getElementById('chat-messages');
+  const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+  const div = document.createElement('div');
+  div.className = 'msg assistant';
+  div.innerHTML = `
+    <div class="avatar" style="background: var(--color-background-danger); color: var(--color-text-danger);">!</div>
+    <div class="body">
+      <div class="meta">System · ${now}</div>
+      <div class="content" style="color: var(--color-text-danger);">${escapeHtml(text)}</div>
+    </div>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addLoading() {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'loading';
+  div.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+function updateCitationsSidebar(citations) {
+  const card = document.getElementById('citations-card');
+  const list = document.getElementById('citations-list');
+  card.style.display = 'block';
+
+  list.innerHTML = citations.map(c => `
+    <div style="padding: 4px 0; border-bottom: 0.5px solid var(--color-border-tertiary);">
+      <div style="font-weight: 500;">${escapeHtml(c.citation_handle)}</div>
+      <div style="color: var(--color-text-secondary); font-size: 11px;">${escapeHtml(c.doc_id)} · score: ${c.relevance_score?.toFixed(3) || '—'}</div>
+    </div>
+  `).join('');
+}
+
+function formatContent(text) {
+  if (!text) return '';
+  // Basic markdown-like formatting
+  let html = escapeHtml(text);
+  // Bold
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Code blocks
+  html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Headers
+  html = html.replace(/^### (.*$)/gm, '<h4 style="margin: 12px 0 4px; font-size: 13px;">$1</h4>');
+  html = html.replace(/^## (.*$)/gm, '<h3 style="margin: 12px 0 4px; font-size: 14px;">$1</h3>');
+  // Lists
+  html = html.replace(/^- (.*$)/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+  // Paragraphs
+  html = html.replace(/\n\n/g, '</p><p>');
+  html = '<p>' + html + '</p>';
+  return html;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// Update function select display
+document.getElementById('function-select').addEventListener('change', function() {
+  document.getElementById('info-function').textContent = this.value;
+});
+</script>
+
+</body>
+</html>

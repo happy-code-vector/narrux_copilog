@@ -5,9 +5,12 @@ Minimal skeleton. Routes from api/routes/.
 
 import structlog
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
 from retrieval.vector_store import close_client, get_stats, init_client
@@ -29,6 +32,8 @@ structlog.configure(
 )
 
 logger = structlog.get_logger(__name__)
+
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 
 
 @asynccontextmanager
@@ -74,3 +79,17 @@ async def health():
         return {"status": "ok", "kb_stats": stats}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+@app.get("/")
+async def serve_frontend():
+    """Serve the Co-Pilot frontend."""
+    index_path = FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return {"error": "Frontend not found"}
+
+
+# Mount static files if frontend directory exists
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
