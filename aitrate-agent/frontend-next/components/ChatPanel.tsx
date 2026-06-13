@@ -48,8 +48,13 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [sessionId, setSessionId] = useState('------');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setSessionId(String(Math.floor(Math.random() * 9000 + 1000)));
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -165,7 +170,7 @@ export function ChatPanel({
         </div>
         <div className="text-[11px] text-text-secondary flex gap-2 items-center">
           <span>
-            Session #{Math.floor(Math.random() * 9000 + 1000)}
+            Session #{sessionId}
           </span>
           <span>Analyst</span>
         </div>
