@@ -68,3 +68,7 @@ eval/results/
 db/migrations/versions/*.py
 
 kb_content
+
+node_modules
+.next
+package-lock.json
