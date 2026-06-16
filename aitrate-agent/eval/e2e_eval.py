@@ -33,9 +33,9 @@ EVAL_DIR = Path(__file__).parent
 
 # Pillar → default FunctionID mapping
 PILLAR_FUNCTION = {
-    "A": "F01",   # Strategy Knowledge
-    "B": "F02",   # Backtest Interpreter
-    "C": "F04",   # Parameter Recommender
+    "A": "F-01",   # Strategy Knowledge
+    "B": "F-02",   # Backtest Interpreter
+    "C": "F-04",   # Parameter Recommender
 }
 
 
