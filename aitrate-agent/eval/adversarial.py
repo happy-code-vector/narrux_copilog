@@ -1,97 +1,226 @@
 """Adversarial evaluation — test agent against hallucination-bait questions.
 
-All questions must return ABSTAIN or correct-contradict.
+Tests three behaviors:
+  - must_abstain:   agent must refuse (confidence=abstain)
+  - must_contradict: agent must correct the false premise
+  - must_include:   agent must include specific governance-aware keywords
+
 100% pass rate required before shipping.
 
-Stub — requires running DB + LLM API keys.
+Usage:
+    python -m eval.adversarial
+    python -m eval.adversarial --adapter anthropic
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import sys
+import time
 import yaml
 from pathlib import Path
 
 import structlog
 
+from retrieval.vector_store import init_client, close_client
+
+# Windows consoles default to cp1252 — force UTF-8 so reports never crash mid-print.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 logger = structlog.get_logger(__name__)
 
+EVAL_DIR = Path(__file__).parent
 
-async def run_adversarial_eval(questions_path: str, adapter: str = "pydantic_ai"):
+
+def _load_questions() -> list[dict]:
+    path = EVAL_DIR / "adversarial.yaml"
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+async def run_adversarial_eval(
+    questions: list[dict],
+    adapter: str = "gemini",
+) -> dict:
     """Run adversarial evaluation.
 
     For each question:
-    - must_abstain: response must have confidence=abstain
-    - must_contradict: response must contradict the false premise
-    - must_include: response must contain these keywords
+    - must_abstain:    response must have confidence=abstain
+    - must_contradict: response must contain correcting keywords from expected_content
+    - must_include:    response must contain ALL keywords from must_include
+
+    Returns dict with per-question results and summary stats.
     """
     from orchestration.agent import run
     from tools.schemas import FunctionID
 
-    with open(questions_path, "r", encoding="utf-8") as f:
-        questions = yaml.safe_load(f)
-
     logger.info("adversarial_eval_start", questions=len(questions))
 
-    results = []
-    for q in questions:
+    per_question = []
+    errors = 0
+
+    for i, q in enumerate(questions, 1):
         qid = q["id"]
+        query = q["question"]
+
+        # Determine test type
+        if q.get("must_abstain"):
+            test_type = "must_abstain"
+        elif q.get("must_contradict"):
+            test_type = "must_contradict"
+        elif q.get("must_include"):
+            test_type = "must_include"
+        elif q.get("expected_content"):
+            test_type = "must_include"  # ADV008 style
+        else:
+            test_type = "unknown"
 
         try:
+            start = time.monotonic()
             response = await run(
                 function_id=FunctionID.F01,
-                user_message=q["question"],
+                user_message=query,
                 user_id="eval_adversarial",
                 adapter=adapter,
             )
+            elapsed = time.monotonic() - start
 
             passed = True
             reason = ""
+            details = {}
 
-            # Check must_abstain
+            content_lower = response.content.lower()
+
+            # --- must_abstain: confidence must be "abstain" ---
             if q.get("must_abstain"):
                 if response.confidence.value != "abstain":
                     passed = False
-                    reason = "should_have_abstained"
+                    reason = f"expected_abstain_got_{response.confidence.value}"
+                details["confidence"] = response.confidence.value
 
-            # Check must_contradict
-            if q.get("must_contradict"):
+            # --- must_contradict: must contain correcting keywords ---
+            elif q.get("must_contradict"):
                 expected = q.get("expected_content", [])
-                content_lower = response.content.lower()
-                if not any(kw.lower() in content_lower for kw in expected):
+                found = [kw for kw in expected if kw.lower() in content_lower]
+                if not found:
                     passed = False
-                    reason = "did_not_contradict"
+                    reason = f"did_not_contradict (expected: {expected})"
+                details["expected"] = expected
+                details["found"] = found
 
-            # Check must_include
-            if q.get("must_include"):
-                expected = q["must_include"]
-                content_lower = response.content.lower()
-                if not all(kw.lower() in content_lower for kw in expected):
+            # --- must_include (or expected_content): must contain ALL keywords ---
+            elif q.get("must_include") or q.get("expected_content"):
+                expected = q.get("must_include") or q.get("expected_content", [])
+                found = [kw for kw in expected if kw.lower() in content_lower]
+                missing = [kw for kw in expected if kw.lower() not in content_lower]
+                if missing:
                     passed = False
-                    reason = "missing_required_content"
+                    reason = f"missing_required_content: {missing}"
+                details["expected"] = expected
+                details["found"] = found
+                details["missing"] = missing
 
-            results.append({"id": qid, "passed": passed, "reason": reason})
+            per_question.append({
+                "id": qid,
+                "question": query,
+                "passed": passed,
+                "test_type": test_type,
+                "confidence": response.confidence.value,
+                "reason": reason,
+                "content_preview": response.content[:300],
+                "elapsed_s": round(elapsed, 2),
+                **details,
+            })
+
+            status = "PASS" if passed else "FAIL"
+            print(f"  [{i}/{len(questions)}] {qid} {status} ({test_type}) {elapsed:.1f}s")
+            if not passed:
+                print(f"    reason: {reason}")
 
         except Exception as e:
+            errors += 1
             logger.error("adversarial_error", qid=qid, error=str(e))
-            results.append({"id": qid, "passed": False, "error": str(e)})
+            per_question.append({
+                "id": qid, "question": query, "passed": False,
+                "test_type": test_type, "error": str(e), "reason": "exception",
+            })
+            print(f"  [{i}/{len(questions)}] {qid} ERROR: {e}")
 
-    passed_count = sum(1 for r in results if r["passed"])
-    print(f"\nAdversarial Evaluation: {passed_count}/{len(results)} passed ({passed_count/len(results):.0%})")
-    if passed_count < len(results):
-        print("FAILED questions:")
-        for r in results:
-            if not r["passed"]:
-                print(f"  {r['id']}: {r.get('reason', r.get('error', 'unknown'))}")
+    return _summarize(per_question, errors)
 
-    return results
+
+def _summarize(per_question: list[dict], errors: int) -> dict:
+    total = len(per_question)
+    passed = sum(1 for r in per_question if r["passed"])
+    failed = [r for r in per_question if not r["passed"]]
+
+    # Group by test type
+    by_type = {}
+    for r in per_question:
+        t = r["test_type"]
+        if t not in by_type:
+            by_type[t] = {"total": 0, "passed": 0}
+        by_type[t]["total"] += 1
+        if r["passed"]:
+            by_type[t]["passed"] += 1
+
+    return {
+        "per_question": per_question,
+        "total": total,
+        "passed": passed,
+        "failed": total - passed,
+        "pass_rate": round(passed / total, 4) if total else 0,
+        "errors": errors,
+        "by_type": by_type,
+        "failed_questions": failed,
+    }
+
+
+def _print_report(result: dict) -> None:
+    print(f"\n{'='*74}")
+    print(f"ADVERSARIAL EVALUATION")
+    print(f"{'='*74}")
+    print(f"  Total questions : {result['total']}")
+    print(f"  Passed          : {result['passed']}")
+    print(f"  Failed          : {result['failed']}")
+    print(f"  Pass rate       : {result['pass_rate']:.1%}")
+    print(f"  Errors          : {result['errors']}")
+
+    print(f"\n  By test type:")
+    for t, stats in result["by_type"].items():
+        pct = stats["passed"] / stats["total"] if stats["total"] else 0
+        print(f"    {t:<20}: {stats['passed']}/{stats['total']} ({pct:.0%})")
+
+    if result["failed_questions"]:
+        print(f"\n  FAILED QUESTIONS:")
+        for q in result["failed_questions"]:
+            print(f"    {q['id']} ({q['test_type']}): {q.get('reason', 'unknown')}")
+
+    # Adversarial requires 100% pass rate
+    if result["pass_rate"] < 1.0:
+        print(f"\n  >>> ADVERSARIAL EVAL FAILED — {result['pass_rate']:.0%} pass rate (requires 100%) <<<")
+    else:
+        print(f"\n  >>> ADVERSARIAL EVAL PASSED — all {result['total']} questions correct <<<")
+
+
+async def main():
+    parser = argparse.ArgumentParser(description="Run adversarial evaluation")
+    parser.add_argument("--adapter", type=str, default="gemini", help="LLM adapter (gemini, anthropic)")
+    args = parser.parse_args()
+
+    questions = _load_questions()
+    print(f"Running adversarial eval ({len(questions)} questions)...")
+    result = await run_adversarial_eval(questions, args.adapter)
+    _print_report(result)
 
 
 if __name__ == "__main__":
-    import sys
-
-    async def main():
-        questions_path = sys.argv[1] if len(sys.argv) > 1 else "eval/adversarial.yaml"
-        await run_adversarial_eval(questions_path)
-
-    asyncio.run(main())
+    init_client()
+    try:
+        asyncio.run(main())
+    finally:
+        close_client()
