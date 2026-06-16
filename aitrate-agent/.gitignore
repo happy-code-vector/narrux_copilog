@@ -72,3 +72,4 @@ kb_content
 node_modules
 .next
 package-lock.json
+failing*.json
