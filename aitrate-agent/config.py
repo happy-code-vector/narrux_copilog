@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     rerank_top_n: int = Field(default=5)
     min_rerank_score: float = Field(default=0.3)
     reranker_provider: str = Field(
-        default="none",
+        default="local",
         description="Reranker provider: 'voyage', 'local', or 'none'",
     )
 

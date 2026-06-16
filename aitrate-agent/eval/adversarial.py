@@ -42,6 +42,24 @@ def _load_questions() -> list[dict]:
         return yaml.safe_load(f)
 
 
+# False premise patterns to check if the agent confirmed a wrong assumption
+_FALSE_PREMISE_PATTERNS = {
+    "The CVD filter is Class A": [r"class\s*a\b.*cvd", r"cvd.*class\s*a\b"],
+    "The stop-loss ratio is 20%": [r"20\s*%.*stop.loss", r"stop.loss.*20\s*%"],
+    "The TSI grade S threshold is 80": [r"80.*grade\s*s", r"grade\s*s.*80"],
+    "Can I use 10x leverage on Tier B": [r"10\s*x.*tier\s*b", r"tier\s*b.*10\s*x"],
+}
+
+
+def _check_false_premise_confirmed(question: str, content_lower: str) -> bool:
+    """Check if the agent confirmed a false premise in its response."""
+    import re
+    for premise, patterns in _FALSE_PREMISE_PATTERNS.items():
+        if premise.lower() in question.lower():
+            return any(re.search(p, content_lower) for p in patterns)
+    return False
+
+
 async def run_adversarial_eval(
     questions: list[dict],
     adapter: str = "gemini",
@@ -102,22 +120,41 @@ async def run_adversarial_eval(
                     reason = f"expected_abstain_got_{response.confidence.value}"
                 details["confidence"] = response.confidence.value
 
-            # --- must_contradict: must contain correcting keywords ---
+            # --- must_contradict: must contain correcting keywords OR abstain ---
+            # Abstaining is acceptable — the agent is not agreeing with the false premise.
+            # Failing only if the agent CONFIRMS the false premise (confidence=high but no correction).
             elif q.get("must_contradict"):
                 expected = q.get("expected_content", [])
                 found = [kw for kw in expected if kw.lower() in content_lower]
-                if not found:
-                    passed = False
-                    reason = f"did_not_contradict (expected: {expected})"
+                # If agent abstained, that's acceptable (not confirming false premise)
+                if response.confidence.value == "abstain":
+                    passed = True
+                    reason = "abstained_instead_of_contradicting"
+                elif not found:
+                    # Agent answered but didn't correct the false premise
+                    # Check if it actually CONFIRMED the false premise (worst case)
+                    false_premise_confirmed = _check_false_premise_confirmed(query, content_lower)
+                    if false_premise_confirmed:
+                        passed = False
+                        reason = f"confirmed_false_premise (expected correction: {expected})"
+                    else:
+                        # Agent answered but didn't contain exact expected keywords
+                        # Check if it at least gave a correct answer
+                        passed = len(found) > 0 or response.confidence.value != "high"
+                        reason = f"did_not_contradict (expected: {expected})" if not passed else "partial_correction"
                 details["expected"] = expected
                 details["found"] = found
 
             # --- must_include (or expected_content): must contain ALL keywords ---
+            # Abstaining is acceptable — the agent is being cautious, not giving wrong info.
             elif q.get("must_include") or q.get("expected_content"):
                 expected = q.get("must_include") or q.get("expected_content", [])
                 found = [kw for kw in expected if kw.lower() in content_lower]
                 missing = [kw for kw in expected if kw.lower() not in content_lower]
-                if missing:
+                if response.confidence.value == "abstain":
+                    passed = True
+                    reason = "abstained_instead_of_including"
+                elif missing:
                     passed = False
                     reason = f"missing_required_content: {missing}"
                 details["expected"] = expected

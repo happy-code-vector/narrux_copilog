@@ -113,6 +113,71 @@ def _build_full_prompt(function_id: FunctionID, user_message: str, structured_in
     return "\n".join(parts)
 
 
+import re
+
+# Patterns for specific entities that must appear in chunks if asked about
+_ENTITY_PATTERNS = [
+    # Filter IDs: F31, F35, F01, etc.
+    (r"\b[Ff](\d{1,2})\b", lambda m: f"f{m.group(1)}"),
+    # Stock/crypto tickers: AAPL, PLTR, XRP, BTC, etc.
+    (r"\b([A-Z]{2,5})\b", lambda m: m.group(1).lower()),
+    # Specific indicators: XYZ, etc.
+    (r"\b([A-Z]{3})\b", lambda m: m.group(1).lower()),
+]
+
+
+def _check_entity_in_chunks(question: str, ranked: list) -> str | None:
+    """Check if specific entities from the question appear in retrieved chunks.
+
+    Returns the entity string if it's asked about but NOT found in any chunk,
+    indicating the question is about something that doesn't exist in the KB.
+    Returns None if all entities are found or no specific entities detected.
+    """
+    q_lower = question.lower()
+
+    # Extract filter IDs from question
+    filter_matches = re.findall(r"\b[Ff](\d{1,2})\b", question)
+    if filter_matches:
+        # Check if any chunk mentions these specific filter IDs
+        all_content = " ".join(rc.chunk.content.lower() for rc in ranked)
+        for fid in filter_matches:
+            # Look for "F31", "filter 31", "filter31", etc.
+            patterns = [
+                rf"\bf{fid}\b",
+                rf"\bfilter\s*{fid}\b",
+                rf"\bfid\s*{fid}\b",
+            ]
+            if not any(re.search(p, all_content) for p in patterns):
+                return f"F{fid}"
+
+    # Extract ticker symbols (3-5 uppercase letters) for score/performance questions
+    if any(kw in q_lower for kw in ["score", "tsi", "performance", "backtest"]):
+        tickers = re.findall(r"\b([A-Z]{3,5})\b", question)
+        _STOP = {"THE", "AND", "FOR", "NOT", "WHAT", "HOW", "WHEN", "CAN",
+                 "TSI", "DQ", "MDD", "PF", "ADX", "MACD", "BB", "RSI",
+                 "CVD", "CMF", "MFI", "ATR", "EMA", "SMA", "RTF",
+                 "BE1", "BE2", "SR", "RT", "CA"}
+        tickers = [t for t in tickers if t not in _STOP]
+        if tickers:
+            all_content = " ".join(rc.chunk.content.lower() for rc in ranked)
+            for ticker in tickers:
+                if ticker.lower() not in all_content:
+                    return ticker
+
+    # Extract indicator/filter names for questions about specific indicators
+    # e.g., "What does the XYZ indicator do?" → check if "xyz" is in chunks
+    indicator_match = re.search(r"\b(?:the\s+)?([A-Z]{3,5})\s+(?:indicator|filter|signal|strategy)\b", question)
+    if indicator_match:
+        name = indicator_match.group(1).lower()
+        _STOP_NAMES = {"tsi", "adx", "macd", "rsi", "cvd", "cmf", "mfi", "atr", "ema", "sma"}
+        if name not in _STOP_NAMES:
+            all_content = " ".join(rc.chunk.content.lower() for rc in ranked)
+            if name not in all_content:
+                return indicator_match.group(1)
+
+    return None
+
+
 async def run(
     function_id: FunctionID,
     user_message: str,
@@ -173,6 +238,15 @@ async def run(
         logger.warning("nothing_passed_rerank_threshold")
         return _make_abstain(function_id, "rerank_threshold_not_met")
 
+    # Step 4b: Entity relevance check — if the question asks about a specific
+    # entity (filter ID, indicator name, ticker, etc.) and NONE of the retrieved
+    # chunks mention it, force abstain. This catches hallucination on questions
+    # about nonexistent things (e.g., "What does filter F31 do?" when F31 doesn't exist).
+    entity_check = _check_entity_in_chunks(user_message, ranked)
+    if entity_check is not None:
+        logger.warning("entity_not_in_chunks", entity=entity_check)
+        return _make_abstain(function_id, f"entity_not_found:{entity_check}")
+
     # Step 5: Build LLMRequest
     context_chunks = [rc.chunk.content for rc in ranked]
     citations = ranked_chunks_to_citations(ranked)
@@ -207,6 +281,19 @@ async def run(
 
     # Step 9: Enforce citations
     response = await enforce_citations(response)
+
+    # Step 9b: If LLM self-abstained (output the abstain message), set confidence
+    from validation.citation_enforcer import ABSTAIN_MESSAGE
+    if response.confidence != ConfidenceLevel.abstain:
+        # Check if LLM output matches abstain pattern
+        abstain_patterns = [
+            r"I don.t have a grounded citation",
+            r"I cannot find",
+            r"no citation",
+            r"not in my knowledge base",
+        ]
+        if any(re.search(p, response.content, re.IGNORECASE) for p in abstain_patterns):
+            response = response.model_copy(update={"confidence": ConfidenceLevel.abstain})
 
     # Step 10: Audit — MUST succeed before returning
     duration_ms = int((time.monotonic() - start_time) * 1000)
