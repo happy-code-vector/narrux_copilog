@@ -54,4 +54,4 @@ Raise a flag for each that is true:
 4. **Cross-check** — TSI vs P&L alignment
 5. **Robustness** — DSR, worst-window, trade count
 6. **Class-coupling Discount** — Any Class C dependencies
-7. **Sources** — Cited documents
+7. **Sources** — Cited documents (no inline citations in sections 1–6)

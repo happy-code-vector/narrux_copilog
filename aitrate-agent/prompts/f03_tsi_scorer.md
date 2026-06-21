@@ -63,4 +63,4 @@ If Cat Floor triggered: "Catastrophic Floor active — recent regime failure. Fu
 
 **Governance:** Whether the leverage cap or weight cap requires a documented exception to exceed.
 
-**Sources:** TSI v2.0 CA Engineering Spec §14.2.
+**Sources:** TSI v2.0 CA Engineering Spec §14.2. (No inline citations in sections above.)

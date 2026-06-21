@@ -93,7 +93,7 @@ def _build_context_block(chunks: list[str]) -> str:
         return ""
     lines = ["<retrieved_context>"]
     for i, chunk in enumerate(chunks, 1):
-        lines.append(f"[{i}] {chunk}")
+        lines.append(f"--- Chunk {i} ---\n{chunk}")
     lines.append("</retrieved_context>")
     return "\n".join(lines)
 

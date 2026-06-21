@@ -47,4 +47,4 @@ For each parameter recommendation, provide:
 2. **Per-Parameter Table** — For each parameter
 3. **Governance Compliance** — Class-specific checks
 4. **Risk Notes** — What could go wrong
-5. **Sources** — Cited evidence
+5. **Sources** — Cited evidence (no inline citations in sections 1–4)

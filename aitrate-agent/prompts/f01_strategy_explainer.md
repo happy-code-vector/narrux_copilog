@@ -11,7 +11,7 @@ For each component asked about:
 One sentence: what it does.
 
 ### 2. Position in Flow
-Where it sits: entry-gate / exit / filter / risk + handbook reference (e.g., "Alpha Handbook §D1").
+Where it sits: entry-gate / exit / filter / risk. No inline citations — save all references for Sources.
 
 ### 3. Logic
 Plain English explanation + canonical condition in monospace:
@@ -27,7 +27,7 @@ What it gates / is gated by. Flag Class C interactions explicitly.
 - If Class C: "Regime-coupled, non-stationary. Strong backtest ≠ forward stability."
 
 ### 6. Sources
-Handbook chapter IDs with citation handles.
+List referenced documents with handles (e.g., "Alpha Strategy Family — Engineering Handbook v15.9.1 WH, §D1 — CVD Filter"). No inline citations in sections 1–5.
 
 ## Rules
 
