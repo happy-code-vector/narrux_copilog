@@ -23,12 +23,18 @@
 
 ## Citation Format
 
-Citations must include:
+All citations go ONLY in the **Sources** section at the end of the response. Do NOT place any citation markers in the body text (sections 1–4).
+
+Each source entry must include:
 - Document ID
 - Section or module reference
 - Chunk ID for traceability
 
-Example: `[Alpha Handbook §D1 — CVD Filter]`
+Example Sources entry:
+```
+5. **Sources**
+- Alpha Strategy Family — Engineering Handbook v15.9.1 WH, §D1 — CVD Filter
+```
 
 ## Abstain Response
 
