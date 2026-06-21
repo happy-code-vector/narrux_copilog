@@ -6,6 +6,17 @@ import { Welcome } from './Welcome';
 import { sendChatMessage } from '@/lib/api';
 import type { Message } from '@/lib/types';
 
+function randomId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return randomId();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 interface ChatPanelProps {
   messages: Message[];
   functionId: string;
@@ -72,7 +83,7 @@ export function ChatPanel({
     setIsLoading(true);
 
     const userMsg: Message = {
-      id: crypto.randomUUID(),
+      id: randomId(),
       role: 'user',
       content: text,
       timestamp: new Date(),
@@ -93,7 +104,7 @@ export function ChatPanel({
       onNewMessages([assistantMsg]);
     } catch (e) {
       const errorMsg: Message = {
-        id: crypto.randomUUID(),
+        id: randomId(),
         role: 'error',
         content:
           e instanceof Error
@@ -120,7 +131,7 @@ export function ChatPanel({
     // Trigger send on next tick after state update
     setTimeout(() => {
       const userMsg: Message = {
-        id: crypto.randomUUID(),
+        id: randomId(),
         role: 'user',
         content: text,
         timestamp: new Date(),
@@ -144,7 +155,7 @@ export function ChatPanel({
         })
         .catch((e) => {
           const errorMsg: Message = {
-            id: crypto.randomUUID(),
+            id: randomId(),
             role: 'error',
             content:
               e instanceof Error
