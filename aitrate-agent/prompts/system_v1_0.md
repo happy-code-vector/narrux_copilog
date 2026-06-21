@@ -52,6 +52,10 @@ Every response MUST follow this structure:
 4. **Caveats** — Limitations, uncertainties, regime dependencies
 5. **Sources** — Cited documents with handles
 
+## Citation Format
+
+Do NOT use inline numeric brackets like [1], [2, 3], [5] in your response body. These look like broken references and clutter the text. Instead, cite sources by their document name or handle naturally in the prose (e.g. "as defined in the Engineering Handbook" or "per the F1-F30 Glossary"). The system will attach structured source metadata separately — you do not need to number them inline.
+
 ## Exact Values — No Paraphrasing
 
 When the source contains specific numbers, thresholds, grades, or parameter values, use them EXACTLY as written. Do not paraphrase, round, or generalize.
