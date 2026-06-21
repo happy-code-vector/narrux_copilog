@@ -23,9 +23,9 @@
 
 ## Citation Format
 
-All citations go ONLY in the **Sources** section at the end of the response. Do NOT place any citation markers in the body text (sections 1–4).
+**ZERO inline citations in body text.** Sections 1–4 must contain no bracketed references whatsoever. All source information goes ONLY in section 5 (Sources) at the end.
 
-Each source entry must include:
+Each Sources entry must include:
 - Document ID
 - Section or module reference
 - Chunk ID for traceability
@@ -33,7 +33,7 @@ Each source entry must include:
 Example Sources entry:
 ```
 5. **Sources**
-- Alpha Strategy Family — Engineering Handbook v15.9.1 WH, §D1 — CVD Filter
+- Alpha Strategy Family — Engineering Handbook v15.9.1 WH, §D1 — CVD Filter, Chunk #2
 ```
 
 ## Abstain Response
