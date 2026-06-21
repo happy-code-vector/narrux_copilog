@@ -30,8 +30,6 @@ Citations must include:
 
 Example: `[Alpha Handbook §D1 — CVD Filter]`
 
-Do NOT use inline numeric brackets like [1], [2, 3], [5]. These are ambiguous and clutter the text. Always cite by document name or section handle as shown above.
-
 ## Abstain Response
 
 When no grounded citation exists, respond EXACTLY with:
