@@ -69,15 +69,30 @@ def _rerank_local(query: str, chunks: list, top_n: int) -> list[RankedChunk]:
 
 # ─── Voyage AI Reranker ─────────────────────────────────────────────────────
 
+_voyage_rerank_client = None
+
+
+def _get_voyage_rerank_client():
+    """Lazy-load the Voyage AI sync client for reranking."""
+    global _voyage_rerank_client
+    if _voyage_rerank_client is None:
+        import voyageai
+
+        settings = get_settings()
+        _voyage_rerank_client = voyageai.Client(api_key=settings.voyage_api_key)
+    return _voyage_rerank_client
+
+
 async def _rerank_voyage(query: str, chunks: list, top_n: int) -> list[RankedChunk]:
-    """Rerank using Voyage AI rerank-2."""
-    import voyageai
+    """Rerank using Voyage AI rerank-2 (sync client wrapped in to_thread)."""
+    import asyncio
 
     settings = get_settings()
-    client = voyageai.AsyncClient(api_key=settings.voyage_api_key)
+    client = _get_voyage_rerank_client()
     documents = [c.content for c in chunks]
 
-    result = await client.rerank(
+    result = await asyncio.to_thread(
+        client.rerank,
         query=query,
         documents=documents,
         model=settings.voyage_rerank_model,
