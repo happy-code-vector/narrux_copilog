@@ -448,6 +448,130 @@ async def ingest_all_project_documents(kb_dir: Path) -> dict[str, int]:
             logger.error("ingestion_error", doc_id=source.doc_id, error=str(e))
             results[source.doc_id] = -1
 
+    # Parameters from DB (replaces flat JSON/CSV ingestion)
+    try:
+        param_counts = await ingest_params_from_db(kb_dir)
+        results.update(param_counts)
+    except Exception as e:
+        logger.error("param_db_ingestion_error", error=str(e))
+
+    return results
+
+
+async def ingest_params_from_db(kb_dir: Path) -> dict[str, int]:
+    """Ingest parameter RAG text from registry.db into Qdrant.
+
+    Reads all parameters from the SQLite DB, generates RAG-ready text for each
+    using the same format as the old retrieval_cards, chunks them by strategy,
+    embeds, and upserts. Replaces the old flat JSON/CSV file ingestion.
+
+    Returns:
+        Dict of {doc_id: chunk_count} per strategy+version.
+    """
+    import json as _json
+    import sqlite3
+
+    from tools.kb_lookup import generate_rag_text
+
+    db_path = kb_dir / "parameters" / "registry.db"
+    if not db_path.exists():
+        logger.warning("registry_db_not_found", path=str(db_path))
+        return {}
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+
+    # Group params by (strategy, version)
+    rows = conn.execute(
+        """SELECT strategy, version, position_index, key, name, type,
+                  default_value, group_name, category, filter_class,
+                  valid_range, min_value, max_value, step, options,
+                  description, basis
+           FROM parameters ORDER BY strategy, version, position_index"""
+    ).fetchall()
+    conn.close()
+
+    # Group by strategy+version
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for row in rows:
+        d = {
+            "index": row["position_index"],
+            "name": row["name"],
+            "key": row["key"],
+            "type": row["type"],
+            "default": row["default_value"],
+            "group": row["group_name"],
+            "category": row["category"],
+            "filter_class": row["filter_class"],
+            "valid_range": row["valid_range"],
+            "min": row["min_value"],
+            "max": row["max_value"],
+            "step": row["step"],
+            "options": _json.loads(row["options"]) if row["options"] else None,
+            "description": row["description"],
+            "basis": row["basis"],
+            "strategy": row["strategy"],
+            "version": row["version"],
+        }
+        key = (row["strategy"], row["version"])
+        grouped.setdefault(key, []).append(d)
+
+    results: dict[str, int] = {}
+
+    for (strategy, version), params in grouped.items():
+        doc_id = f"{strategy}_param_registry_{version.replace('.', '_')}"
+
+        # Generate RAG text for each param
+        rag_texts = [generate_rag_text(p) for p in params]
+        combined = "\n\n".join(rag_texts)
+
+        # Chunk the combined text
+        raw_chunks = chunk_sliding_window(combined, IngestionSource(
+            path=Path(f"db://{strategy}/{version}"),
+            doc_id=doc_id,
+            doc_version=version,
+            title=f"{strategy.title()} Parameter Registry {version}",
+            scope=DocumentScope.strategy,
+            strategy=strategy,
+        ))
+
+        if not raw_chunks:
+            results[doc_id] = 0
+            continue
+
+        # Register document
+        doc = KBDocument(
+            doc_id=doc_id,
+            doc_version=version,
+            title=f"{strategy.title()} Parameter Registry {version}",
+            scope=DocumentScope.strategy,
+            strategy=strategy,
+        )
+        await upsert_document(doc)
+        await delete_chunks_for_document(doc_id)
+
+        # Embed
+        texts = [c.content for c in raw_chunks]
+        embeddings = await embed_documents(texts)
+
+        # Build chunks
+        kb_chunks: list[KBChunk] = []
+        for i, (raw, embedding) in enumerate(zip(raw_chunks, embeddings)):
+            chunk_id = make_chunk_id(doc_id, raw.content, i)
+            kb_chunks.append(KBChunk(
+                chunk_id=chunk_id,
+                doc_id=doc_id,
+                doc_version=version,
+                content=raw.content,
+                token_count=_count_tokens(raw.content),
+                embedding=embedding,
+                metadata=raw.metadata,
+            ))
+
+        count = await upsert_chunks(kb_chunks)
+        results[doc_id] = count
+        logger.info("param_db_ingested", doc_id=doc_id, params=len(params), chunks=count)
+
     return results
 
 
@@ -457,7 +581,7 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
     kb_content/ layout:
       strategies/     → strategy handbooks (per-strategy subdirs)
       filters/        → filter glossary markdown (JSON data in registry.db)
-      parameters/     → unified registry JSONs, registry.db (SQLite)
+      parameters/     → registry.db (SQLite) — ingested via ingest_params_from_db()
       governance/     → specs, frameworks, rules
       playbook/       → edge cases, function specs
       templates/      → report templates, reference appendices
@@ -515,20 +639,9 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
         title="NARRUX Strategy Comparison Matrix v1.0", scope=DocumentScope.strategy,
     ))
 
-    # ─── Unified parameter registries (JSON) ───────────────────────────────────
-    params_dir = kb_dir / "parameters"
-    registries = [
-        ("alpha_param_registry", "unified_alpha_v15_8.json", "v15.8", "alpha"),
-        ("sentinel_param_registry", "unified_sentinel_v1_9.json", "v1.9", "sentinel"),
-        ("master_param_registry", "unified_master_long_v13.json", "v13", "master"),
-        ("nrx_param_registry", "unified_nrx_v1.json", "v1", "nrx"),
-    ]
-    for doc_id, filename, ver, strategy in registries:
-        sources.append(IngestionSource(
-            path=params_dir / filename, doc_id=doc_id, doc_version=ver,
-            title=f"{strategy.title()} Parameter Registry", scope=DocumentScope.strategy,
-            strategy=strategy,
-        ))
+    # ─── Parameter registries ─────────────────────────────────────────────────
+    # Parameters are ingested from registry.db via ingest_params_from_db(), not
+    # from flat files. See that function for details.
 
     # ─── Filter glossary ──────────────────────────────────────────────────────
     # Markdown handbook for RAG; JSON data lives in registry.db (filter_classes,
