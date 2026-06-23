@@ -42,7 +42,7 @@ env/
 *.sqlite3
 
 # Qdrant embedded storage
-qdrant_data/
+qdrant_data*/
 
 # Audit logs (append-only JSONL)
 audit_data/
