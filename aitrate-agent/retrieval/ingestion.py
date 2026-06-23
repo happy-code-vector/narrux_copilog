@@ -456,8 +456,8 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
 
     kb_content/ layout:
       strategies/     → strategy handbooks (per-strategy subdirs)
-      filters/        → filter glossary + JSON lookup
-      parameters/     → input index CSVs, bounds (future)
+      filters/        → filter glossary markdown (JSON data in registry.db)
+      parameters/     → unified registry JSONs, registry.db (SQLite)
       governance/     → specs, frameworks, rules
       playbook/       → edge cases, function specs
       templates/      → report templates, reference appendices
@@ -515,33 +515,30 @@ def _build_source_registry(kb_dir: Path) -> list[IngestionSource]:
         title="NARRUX Strategy Comparison Matrix v1.0", scope=DocumentScope.strategy,
     ))
 
-    # ─── Input index CSVs ─────────────────────────────────────────────────────
+    # ─── Unified parameter registries (JSON) ───────────────────────────────────
     params_dir = kb_dir / "parameters"
-    input_indices = [
-        ("alpha_v15_9_1_input_index", "alpha_v15_9_1_input_index.csv", "15.9.1", "alpha"),
-        ("sentinel_v1_9_input_index", "sentinel_v1_9_input_index.csv", "1.9", "sentinel"),
-        ("master_v14_3_input_index", "master_v14_3_input_index.csv", "14.3", "master"),
-        ("nrx_mtr_v1_input_index", "nrx_mtr_v1_input_index.csv", "1.0", "nrx"),
+    registries = [
+        ("alpha_param_registry", "unified_alpha_v15_8.json", "v15.8", "alpha"),
+        ("sentinel_param_registry", "unified_sentinel_v1_9.json", "v1.9", "sentinel"),
+        ("master_param_registry", "unified_master_long_v13.json", "v13", "master"),
+        ("nrx_param_registry", "unified_nrx_v1.json", "v1", "nrx"),
     ]
-    for doc_id, filename, ver, strategy in input_indices:
+    for doc_id, filename, ver, strategy in registries:
         sources.append(IngestionSource(
             path=params_dir / filename, doc_id=doc_id, doc_version=ver,
-            title=f"{strategy.title()} Input Index", scope=DocumentScope.strategy,
+            title=f"{strategy.title()} Parameter Registry", scope=DocumentScope.strategy,
             strategy=strategy,
         ))
 
     # ─── Filter glossary ──────────────────────────────────────────────────────
+    # Markdown handbook for RAG; JSON data lives in registry.db (filter_classes,
+    # governance_rules, strategy_filters, adaptive_config tables).
     filters_dir = kb_dir / "filters"
     sources.append(IngestionSource(
         path=filters_dir / "NARRUX_Filter_Glossary_and_Param_Classes_v1.1.md",
         doc_id="filter_glossary_and_param_classes_v1_1", doc_version="1.1",
         title="NARRUX Filter Glossary and Param Classes v1.1",
         scope=DocumentScope.filter_glossary,
-    ))
-    sources.append(IngestionSource(
-        path=filters_dir / "narrux_filter_glossary.json",
-        doc_id="filter_glossary_json", doc_version="1.0",
-        title="NARRUX Filter Glossary (JSON)", scope=DocumentScope.filter_glossary,
     ))
 
     # ─── Governance ───────────────────────────────────────────────────────────
