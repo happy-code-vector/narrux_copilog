@@ -125,13 +125,13 @@ _voyage_client = None
 
 
 def _get_voyage_client():
-    """Lazy-load the Voyage AI async client."""
+    """Lazy-load the Voyage AI sync client."""
     global _voyage_client
     if _voyage_client is None:
         import voyageai
 
         settings = get_settings()
-        _voyage_client = voyageai.AsyncClient(api_key=settings.voyage_api_key)
+        _voyage_client = voyageai.Client(api_key=settings.voyage_api_key)
     return _voyage_client
 
 
@@ -140,7 +140,9 @@ VOYAGE_BATCH_LIMIT = 128
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 async def _embed_voyage(texts: Sequence[str], input_type: str = "document") -> list[list[float]]:
-    """Embed texts using Voyage AI API."""
+    """Embed texts using Voyage AI API (sync client wrapped in to_thread)."""
+    import asyncio
+
     settings = get_settings()
     client = _get_voyage_client()
     all_embeddings: list[list[float]] = []
@@ -153,8 +155,9 @@ async def _embed_voyage(texts: Sequence[str], input_type: str = "document") -> l
             batch_size=len(batch),
             model=settings.voyage_embedding_model,
         )
-        result = await client.embed(
-            texts=batch,
+        result = await asyncio.to_thread(
+            client.embed,
+            texts=list(batch),
             model=settings.voyage_embedding_model,
             input_type=input_type,
         )
@@ -165,10 +168,13 @@ async def _embed_voyage(texts: Sequence[str], input_type: str = "document") -> l
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 async def _embed_query_voyage(query: str) -> list[float]:
-    """Embed a single query using Voyage AI API."""
+    """Embed a single query using Voyage AI API (sync client wrapped in to_thread)."""
+    import asyncio
+
     settings = get_settings()
     client = _get_voyage_client()
-    result = await client.embed(
+    result = await asyncio.to_thread(
+        client.embed,
         texts=[query],
         model=settings.voyage_embedding_model,
         input_type="query",
