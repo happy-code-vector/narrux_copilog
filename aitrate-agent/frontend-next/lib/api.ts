@@ -1,4 +1,4 @@
-import type { ChatResponse, KBStats, HealthResponse } from './types';
+import type { ChatResponse, KBStats, HealthResponse, BacktestResult } from './types';
 
 const API_BASE = '/api';
 
@@ -43,4 +43,29 @@ export async function fetchHealth(): Promise<HealthResponse | null> {
   } catch {
     return null;
   }
+}
+
+export async function uploadBacktest(
+  file: File,
+  strategyId: string = 'unknown',
+  asset: string = 'unknown',
+  capitalBasis: number = 100000,
+): Promise<BacktestResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('strategy_id', strategyId);
+  formData.append('asset', asset);
+  formData.append('capital_basis', String(capitalBasis));
+
+  const resp = await fetch(`${API_BASE}/chat/backtest`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(err.detail || `HTTP ${resp.status}`);
+  }
+
+  return resp.json();
 }

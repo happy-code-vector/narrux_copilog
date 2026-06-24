@@ -3,8 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { Welcome } from './Welcome';
-import { sendChatMessage } from '@/lib/api';
-import type { Message } from '@/lib/types';
+import { sendChatMessage, uploadBacktest } from '@/lib/api';
+import type { Message, BacktestResult } from '@/lib/types';
 
 function randomId(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -28,6 +28,53 @@ const FUNCTIONS = [
   { value: 'F-04', label: 'F-04 Recommend' },
   { value: 'F-05', label: 'F-05 Drift' },
 ];
+
+function formatBacktestResult(result: BacktestResult): string {
+  const { summary, tsi, trades_parsed } = result;
+  const gradeEmoji: Record<string, string> = {
+    S: '🟢', A: '🔵', B: '🟡', C: '🟠', D: '🔴',
+  };
+
+  let md = `## ${gradeEmoji[tsi.grade] ?? '⚪'} TSI Grade: ${tsi.grade} (${tsi.final_tsi.toFixed(1)})\n\n`;
+  md += `**Trades parsed:** ${trades_parsed}\n\n`;
+
+  md += `### Summary\n\n`;
+  md += `| Metric | Value |\n|---|---|\n`;
+  md += `| Total Trades | ${summary.total_trades} |\n`;
+  md += `| Win Rate | ${summary.win_rate.toFixed(1)}% |\n`;
+  md += `| Profit Factor | ${summary.profit_factor.toFixed(2)} |\n`;
+  md += `| Net P&L | ${summary.net_pnl.toFixed(2)}% |\n`;
+  md += `| Max Drawdown | ${summary.max_drawdown_pct.toFixed(2)}% |\n`;
+  md += `| Stop-Loss Ratio | ${(summary.stop_loss_ratio * 100).toFixed(1)}% |\n`;
+
+  md += `\n### TSI Details\n\n`;
+  md += `| Metric | Value |\n|---|---|\n`;
+  md += `| Stability | ${tsi.stability.toFixed(1)} |\n`;
+  md += `| Leverage Cap | ${tsi.leverage_cap.toFixed(1)}x |\n`;
+  md += `| Catastrophic Floor | ${tsi.catastrophic_floor ? 'Yes ⚠️' : 'No'} |\n`;
+
+  if (tsi.dq_triggers.length > 0) {
+    md += `\n### ⚠️ DQ Triggers\n\n`;
+    tsi.dq_triggers.forEach((t) => {
+      md += `- ${t}\n`;
+    });
+  }
+
+  if (tsi.period_metrics.length > 0) {
+    md += `\n### Period Metrics\n\n`;
+    md += `| Period | Trades | WR% | PF | MDD% | Composite | Flag |\n|---|---|---|---|---|---|---|\n`;
+    tsi.period_metrics.forEach((pm) => {
+      const flag = pm.insufficient_sample ? '⚠️ low n' : '';
+      md += `| ${pm.period} | ${pm.n} | ${pm.win_rate.toFixed(1)} | ${pm.profit_factor.toFixed(2)} | ${pm.mdd_pct.toFixed(1)} | ${pm.composite.toFixed(1)} | ${flag} |\n`;
+    });
+  }
+
+  if (summary.stop_loss_ratio > 0.4) {
+    md += `\n> ⚠️ **Stop-loss ratio > 40%** — review stop placement. This may indicate stops are too wide relative to take-profit targets.\n`;
+  }
+
+  return md;
+}
 
 function LoadingDots() {
   return (
@@ -59,6 +106,7 @@ export function ChatPanel({
   const [sessionId, setSessionId] = useState('------');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setSessionId(String(Math.floor(Math.random() * 9000 + 1000)));
@@ -122,6 +170,54 @@ export function ChatPanel({
       handleSend();
     }
   };
+
+  const handleFileUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || isLoading) return;
+
+      // Reset the input so the same file can be re-selected
+      e.target.value = '';
+
+      setIsLoading(true);
+
+      const userMsg: Message = {
+        id: randomId(),
+        role: 'user',
+        content: `📊 Backtest upload: **${file.name}**`,
+        timestamp: new Date(),
+        functionId: 'F-02',
+      };
+      onNewMessages([userMsg]);
+
+      try {
+        const result = await uploadBacktest(file);
+        const assistantMsg: Message = {
+          id: randomId(),
+          role: 'assistant',
+          content: formatBacktestResult(result),
+          timestamp: new Date(),
+          functionId: 'F-02',
+          confidence: 'high',
+        };
+        onNewMessages([assistantMsg]);
+      } catch (err) {
+        const errorMsg: Message = {
+          id: randomId(),
+          role: 'error',
+          content:
+            err instanceof Error
+              ? err.message
+              : 'Failed to upload backtest file.',
+          timestamp: new Date(),
+        };
+        onNewMessages([errorMsg]);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [isLoading, onNewMessages],
+  );
 
   const handleSuggestion = (text: string) => {
     setInput(text);
@@ -209,6 +305,26 @@ export function ChatPanel({
           className="flex-1 h-9 border border-black/[0.18] rounded-md px-3 text-[13px] bg-white focus:outline-none focus:border-accent"
           disabled={isLoading}
         />
+        {functionId === 'F-02' && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isLoading}
+              title="Upload backtest xlsx"
+              className="h-9 px-3 border border-black/[0.18] rounded-md text-[13px] bg-white cursor-pointer hover:bg-surface-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+            >
+              <span>📎</span>
+              <span className="hidden sm:inline">Upload</span>
+            </button>
+          </>
+        )}
         <select
           value={functionId}
           onChange={(e) => onFunctionChange(e.target.value)}
