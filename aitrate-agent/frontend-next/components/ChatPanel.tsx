@@ -176,12 +176,12 @@ function formatBacktestResult(result: BacktestResult): string {
  * Parse strategy ID and version from backtest filename.
  *
  * Expected patterns:
- *   alpha_v15_8_backtest.xlsx     → { strategy: "alpha", version: "v15.8" }
- *   alpha_unified_v15.9_WH.xlsx   → { strategy: "alpha", version: "v15.9" }
- *   master_v14_3.xlsx             → { strategy: "master", version: "v14.3" }
- *   nrx_v1.xlsx                   → { strategy: "nrx", version: "v1" }
- *   alpha_backtest.xlsx           → { strategy: "alpha", version: null }
- *   random.xlsx                   → { strategy: "unknown", version: null }
+ *   NARRUX_Alpha_Unified_v15.9_WH_BYBIT_...xlsx → { strategy: "alpha", version: "v15.9" }
+ *   alpha_v15_8_backtest.xlsx                     → { strategy: "alpha", version: "v15.8" }
+ *   master_v14_3.xlsx                             → { strategy: "master", version: "v14.3" }
+ *   nrx_v1.xlsx                                   → { strategy: "nrx", version: "v1" }
+ *   alpha_backtest.xlsx                           → { strategy: "alpha", version: null }
+ *   random.xlsx                                   → { strategy: "unknown", version: null }
  */
 function parseStrategyFromFilename(filename: string): {
   strategy: string;
@@ -192,14 +192,21 @@ function parseStrategyFromFilename(filename: string): {
     .replace('_backtest', '');
 
   // Known strategy names (order matters — check longer names first)
-  const KNOWN_STRATEGIES = ['alpha', 'master', 'sentinel', 'nrx'];
+  const KNOWN_STRATEGIES = ['sentinel', 'master', 'alpha', 'nrx'];
 
-  // Try to find a known strategy name in the filename
+  // Try to find a known strategy name anywhere in the filename
+  // This handles "NARRUX_Alpha_...", "alpha_...", "Master_...", etc.
+  const nameLower = name.toLowerCase();
   let strategy: string | null = null;
   for (const s of KNOWN_STRATEGIES) {
-    if (name.toLowerCase().startsWith(s)) {
-      strategy = s;
-      break;
+    // Check if the strategy name appears as a word boundary in the filename
+    const idx = nameLower.indexOf(s);
+    if (idx !== -1) {
+      // Verify it's at a word boundary (start of string or after _/-)
+      if (idx === 0 || nameLower[idx - 1] === '_' || nameLower[idx - 1] === '-') {
+        strategy = s;
+        break;
+      }
     }
   }
 
