@@ -3,7 +3,6 @@
 NO pydantic_ai imports. Pure Python + Pydantic.
 """
 
-import re
 import structlog
 
 from tools.schemas import AgentResponse, ConfidenceLevel, FunctionID
@@ -27,7 +26,6 @@ CLASS_C_COMPONENTS = [
 def validate_response(response: AgentResponse) -> AgentResponse:
     """Run function-specific validators based on response.function_id.
 
-    F-03 → validate_tsi_output
     F-04 → validate_recommendations
     F-02 → validate_backtest_response
     F-05 → validate_drift_response
@@ -37,9 +35,7 @@ def validate_response(response: AgentResponse) -> AgentResponse:
     """
     issues: list[str] = []
 
-    if response.function_id == FunctionID.F03:
-        issues.extend(validate_tsi_output(response).get("issues", []))
-    elif response.function_id == FunctionID.F04:
+    if response.function_id == FunctionID.F04:
         issues.extend(validate_recommendations(response).get("issues", []))
     elif response.function_id == FunctionID.F02:
         issues.extend(validate_backtest_response(response).get("issues", []))
@@ -62,36 +58,6 @@ def validate_response(response: AgentResponse) -> AgentResponse:
         )
 
     return response
-
-
-def validate_tsi_output(response: AgentResponse) -> dict:
-    """Validate TSI (F-03) output.
-
-    - If not computed_from_raw_csv and no ± tolerance note → issue
-    - Check grade implies correct leverage cap
-    """
-    issues: list[str] = []
-    content = response.content.lower()
-
-    # Check reconstruction tolerance note
-    if response.structured_output and not response.structured_output.get("computed_from_raw_csv"):
-        if "±" not in response.content and "tolerance" not in content:
-            issues.append("reconstructed_score_without_tolerance_note")
-
-    # Check grade → leverage cap consistency
-    grade_cap_map = {"s": 3.0, "a": 2.0, "b": 1.5, "c": 1.0, "d": 0.0}
-    for grade, expected_cap in grade_cap_map.items():
-        if f"grade {grade.upper()}" in content or f"grade: {grade.upper()}" in content:
-            cap_pattern = rf"{expected_cap}[x×]"
-            if not re.search(cap_pattern, content):
-                # Check if any cap is mentioned that doesn't match
-                cap_mentions = re.findall(r"(\d+\.?\d*)[x×]", content)
-                for cap_str in cap_mentions:
-                    cap_val = float(cap_str)
-                    if abs(cap_val - expected_cap) > 0.01:
-                        issues.append(f"grade_{grade}_cap_mismatch:{cap_val}!={expected_cap}")
-
-    return {"issues": issues}
 
 
 def validate_recommendations(response: AgentResponse) -> dict:

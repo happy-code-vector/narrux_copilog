@@ -113,8 +113,7 @@ aitrate-agent/
 | Function | ID | Description |
 |----------|-----|-------------|
 | Strategy Explainer | F-01 | Answer questions about strategies with citations |
-| Backtest Interpreter | F-02 | Parse xlsx, compute TSI, surface anomalies |
-| TSI Auto-Grading | F-03 | Compute TSI v2.0 CA score |
+| Backtest Interpreter | F-02 | Parse xlsx, compute TSI, surface anomalies, suggest improvements |
 | Parameter Recommender | F-04 | Recommend adjustments within Class A/B/C bounds |
 | Drift Monitor | F-05 | Compare backtest vs live performance |
 

@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     )
     gemini_model_secondary: str = Field(
         default="gemini-2.5-flash",
-        description="Secondary Gemini model for F-03, F-05",
+        description="Secondary Gemini model for F-05",
     )
 
     # ─── Anthropic (production) ─────────────────────────────
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
         default="claude-opus-4-7", description="Primary LLM for F-01, F-02, F-04"
     )
     anthropic_model_secondary: str = Field(
-        default="claude-sonnet-4-6", description="Secondary LLM for F-03, F-05"
+        default="claude-sonnet-4-6", description="Secondary LLM for F-05"
     )
 
     # ─── Embedding Model ─────────────────────────────────────

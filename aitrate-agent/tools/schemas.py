@@ -51,7 +51,6 @@ class ConfidenceLevel(str, Enum):
 class FunctionID(str, Enum):
     F01 = "F-01"
     F02 = "F-02"
-    F03 = "F-03"
     F04 = "F-04"
     F05 = "F-05"
 
@@ -236,7 +235,7 @@ class TSIResult(BaseModel):
     period_end: datetime
     capital_basis: float
 
-    # Component sub-scores (for F-03 presentation)
+    # Component sub-scores
     components: dict[str, float]  # {"sharpe": 0.73, "pf": 0.91, ...} — period-weighted
     weighted_composite: float  # pre-stability score (debugging + cross-check)
     stability: float  # 0–100

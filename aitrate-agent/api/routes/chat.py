@@ -1,7 +1,7 @@
 """Chat endpoint — wired to orchestration/agent.py.
 
 POST /chat — main RAG pipeline for F-01 through F-05.
-POST /chat/backtest — upload xlsx → TSI + F-02 + F-03.
+POST /chat/backtest — upload xlsx → TSI + F-02.
 """
 
 from __future__ import annotations
@@ -260,7 +260,7 @@ async def chat_backtest(
     asset: str = Form("unknown"),
     capital_basis: float = Form(100000.0),
 ):
-    """Upload a backtest xlsx → parse → TSI score → F-02 + F-03 responses."""
+    """Upload a backtest xlsx → parse → TSI score → F-02 response."""
     import tempfile
     from pathlib import Path
     from tools.backtest_parser import parse_backtest_xlsx

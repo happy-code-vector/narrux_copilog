@@ -24,7 +24,6 @@ interface ChatPanelProps {
 const FUNCTIONS = [
   { value: 'F-01', label: 'F-01 Explain' },
   { value: 'F-02', label: 'F-02 Backtest' },
-  { value: 'F-03', label: 'F-03 TSI Score' },
   { value: 'F-04', label: 'F-04 Recommend' },
   { value: 'F-05', label: 'F-05 Drift' },
 ];

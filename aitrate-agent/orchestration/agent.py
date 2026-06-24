@@ -71,11 +71,6 @@ FUNCTION_CONFIG = {
         "prompt_file": "f02_backtest_interpreter.md",
         "retrieval_scope": "backtest_analysis",
     },
-    FunctionID.F03: {
-        "model": _models["secondary"],
-        "prompt_file": "f03_tsi_scorer.md",
-        "retrieval_scope": "tsi_spec",
-    },
     FunctionID.F04: {
         "model": _models["primary"],
         "prompt_file": "f04_parameter_recommender.md",
