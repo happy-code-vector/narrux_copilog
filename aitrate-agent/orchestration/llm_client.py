@@ -116,7 +116,13 @@ class GeminiAdapter:
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         """Generate a completion using Gemini API."""
-        from google.genai.types import GenerateContentConfig, ThinkingConfig
+        from google.genai.types import (
+            GenerateContentConfig,
+            HarmBlockThreshold,
+            HarmCategory,
+            SafetySetting,
+            ThinkingConfig,
+        )
 
         model = request.model or "gemini-2.5-flash"
         max_tokens = request.max_tokens or self._settings.max_tokens_per_response
@@ -134,6 +140,24 @@ class GeminiAdapter:
             "system_instruction": request.system_prompt,
             "max_output_tokens": max_tokens,
             "temperature": request.temperature,
+            "safety_settings": [
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                    threshold=HarmBlockThreshold.BLOCK_NONE,
+                ),
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_HARASSMENT,
+                    threshold=HarmBlockThreshold.BLOCK_NONE,
+                ),
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                    threshold=HarmBlockThreshold.BLOCK_NONE,
+                ),
+                SafetySetting(
+                    category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                    threshold=HarmBlockThreshold.BLOCK_NONE,
+                ),
+            ],
         }
         if "2.5" in model:
             config_kwargs["thinking_config"] = ThinkingConfig(thinking_budget=0)

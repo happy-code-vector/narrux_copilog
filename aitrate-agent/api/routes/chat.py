@@ -46,6 +46,165 @@ class ChatResponse(BaseModel):
     validator_results: dict
 
 
+def _diagnose_backtest(tool_results: dict) -> dict:
+    """Pre-analyze tool outputs to identify the primary failure mode.
+
+    Returns a structured diagnosis the LLM can act on directly.
+    Field paths match BacktestResult from frontend:
+      tool_results.summary, tool_results.tsi, tool_results.robustness, tool_results.drift
+    """
+    summary = tool_results.get("summary", {})
+    tsi = tool_results.get("tsi", {})
+    robustness = tool_results.get("robustness", {})
+    drift = tool_results.get("drift", {})
+    worst_window = robustness.get("worst_window", {})
+
+    tsi_score = tsi.get("final_tsi", 0)
+    mdd_pct = summary.get("max_drawdown_pct", 0)
+    dq_triggers = tsi.get("dq_triggers", [])
+    worst_drop = worst_window.get("drop_points", 0)
+    worst_period = worst_window.get("worst_period_start", "")
+    avg_exit = drift.get("avg_exit_quality", 0)
+    flagged_exits = drift.get("exits_flagged", 0)
+    total_exits = drift.get("total_exits", 0)
+    dsr_inflation = robustness.get("dsr_inflation_pct", 0)
+    stop_count = summary.get("stop_loss_count", 0)
+
+    issues = []
+
+    # Check worst-window — the single biggest fragility signal
+    if worst_drop and worst_drop > 15:
+        issues.append({
+            "issue": "worst_window_fragility",
+            "severity": "high",
+            "detail": f"Worst-window TSI dropped {worst_drop} points ({tsi_score} -> {tsi_score - worst_drop}). "
+                      f"Worst period: {worst_period}. DQ triggers: {', '.join(dq_triggers) or 'none'}.",
+            "relevant_categories": ["Exit logic", "Exit / Stop", "Risk management"],
+        })
+
+    # Check exit quality — if MFE capture is low, exits are leaving money
+    if avg_exit and avg_exit < 70:
+        issues.append({
+            "issue": "poor_exit_quality",
+            "severity": "high",
+            "detail": f"Average MFE capture is only {avg_exit:.1f}% — trades are exiting with less than 70% of peak favorability.",
+            "relevant_categories": ["Exit logic", "Exit / Stop"],
+        })
+
+    # Check if too many exits are flagged
+    if flagged_exits and total_exits and flagged_exits > total_exits * 0.2:
+        issues.append({
+            "issue": "high_flagged_exits",
+            "severity": "medium",
+            "detail": f"{flagged_exits}/{total_exits} exits flagged ({100*flagged_exits/total_exits:.0f}%) — exit mechanics need review.",
+            "relevant_categories": ["Exit logic", "Exit / Stop"],
+        })
+
+    # Check DSR inflation — overfitting signal
+    if dsr_inflation and dsr_inflation > 15:
+        issues.append({
+            "issue": "dsr_overfitting",
+            "severity": "medium",
+            "detail": f"Deflated Sharpe shows {dsr_inflation:.1f}% inflation — strategy may be overfit to historical data.",
+            "relevant_categories": ["Entry logic", "Capital & Sizing"],
+        })
+
+    # Check high stop-loss count
+    if stop_count and stop_count > 50:
+        issues.append({
+            "issue": "high_stop_frequency",
+            "severity": "medium",
+            "detail": f"{stop_count} stop-losses hit out of {total_exits} exits. Entry signals may need tightening.",
+            "relevant_categories": ["Entry logic", "Risk management"],
+        })
+
+    # Check MDD near DQ threshold
+    if mdd_pct and mdd_pct > 18:
+        issues.append({
+            "issue": "mdd_near_dq",
+            "severity": "medium",
+            "detail": f"MDD is {mdd_pct:.1f}% — near or at the DQ trigger threshold. Capital allocation or sizing may need adjustment.",
+            "relevant_categories": ["Capital & Sizing", "Risk management"],
+        })
+
+    if not issues:
+        issues.append({
+            "issue": "no_critical_issues",
+            "severity": "low",
+            "detail": f"TSI {tsi_score} with no critical failure modes detected. Focus on incremental improvements.",
+            "relevant_categories": ["Exit logic", "Capital & Sizing"],
+        })
+
+    # Sort by severity — high first
+    severity_order = {"high": 0, "medium": 1, "low": 2}
+    issues.sort(key=lambda x: severity_order.get(x["severity"], 99))
+
+    return {
+        "primary_issue": issues[0]["issue"],
+        "tsi_score": tsi_score,
+        "issues": issues,
+    }
+
+
+def _select_relevant_params(
+    diagnosis: dict,
+    class_a: list[dict],
+    class_b: list[dict],
+    class_c: list[dict],
+    exit_params: list[dict],
+    sizing_params: list[dict],
+) -> list[dict]:
+    """Select only parameters relevant to the diagnosed issues.
+
+    DB params have: name, key, group, category, filter_class, valid_range, default, description.
+    All params have category='Filter / Signal' — we match on group and filter_class instead.
+    """
+    # Map diagnosis issues to relevant parameter groups
+    issue_group_map = {
+        "worst_window_fragility": ["Exit: MFI", "ATR/ADX", "Spike Protection", "Supertrend"],
+        "poor_exit_quality": ["Exit: MFI", "ATR/ADX", "Bollinger Bands", "Supertrend"],
+        "high_flagged_exits": ["Exit: MFI", "ATR/ADX", "Spike Protection"],
+        "high_stop_frequency": ["ATR/ADX", "RSI", "Bollinger Bands", "Spike Protection", "Supertrend"],
+        "dsr_overfitting": ["RSI", "Bollinger Bands", "MACD Primary", "MACD Secondary"],
+        "mdd_near_dq": ["ATR/ADX", "Spike Protection", "Supertrend", "Exit: MFI"],
+        "no_critical_issues": [],  # include Class A defaults
+    }
+
+    # Collect relevant groups from all diagnosed issues
+    relevant_groups = set()
+    for issue in diagnosis.get("issues", []):
+        groups = issue_group_map.get(issue["issue"], [])
+        relevant_groups.update(groups)
+
+    # Merge all params, dedup by key
+    all_params = class_a + class_b + class_c + exit_params + sizing_params
+    seen_keys = set()
+    relevant = []
+    for p in all_params:
+        key = p.get("key", "")
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        group = p.get("group", "")
+        pclass = p.get("filter_class", "")
+
+        # Include if group matches diagnosis, or always include Class A (stable reference)
+        if group in relevant_groups or pclass == "A":
+            relevant.append({
+                "key": key,
+                "name": p.get("name", key),
+                "class": pclass,
+                "group": group,
+                "default": p.get("default", ""),
+                "valid_range": p.get("valid_range", ""),
+                "description": p.get("description", ""),
+            })
+
+    # Cap at 30 params to keep LLM context focused
+    return relevant[:30]
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
     """Chat endpoint — runs the full RAG pipeline.
@@ -363,7 +522,6 @@ async def interpret_backtest(request: InterpretRequest):
     from registry.db, and calls the LLM with the F-02 prompt to produce
     an interpretive narrative with improvement suggestions.
     """
-    from orchestration.agent import run, _build_full_prompt
     from orchestration.llm_client import LLMRequest, get_llm_client
     from tools.kb_lookup import (
         query_params_by_class,
@@ -371,7 +529,6 @@ async def interpret_backtest(request: InterpretRequest):
         get_governance_rules,
         get_filter_class_defs,
     )
-    from tools.schemas import FunctionID
 
     logger.info("interpret_backtest", strategy_id=request.strategy_id)
 
@@ -397,31 +554,27 @@ async def interpret_backtest(request: InterpretRequest):
                          query_params_by_category("Exit / Stop", strategy=strategy)
             sizing_params = query_params_by_category("Capital & Sizing", strategy=strategy)
 
+            # Pre-analyze: identify what's failing and select relevant params only
+            diagnosis = _diagnose_backtest(request.tool_results)
+
+            # Only pass params relevant to the diagnosis — not all 453
+            relevant_params = _select_relevant_params(
+                diagnosis, class_a, class_b, class_c, exit_params, sizing_params,
+            )
+
             strategy_context = {
                 "strategy": strategy,
                 "version": version or "latest",
-                "parameter_count": len(class_a) + len(class_b) + len(class_c),
-                "parameters_by_class": {
-                    "A": class_a,
-                    "B": class_b,
-                    "C": class_c,
-                },
-                "governance": {
-                    "governance_rules": get_governance_rules(),
-                    "filter_classes": get_filter_class_defs(),
-                },
-                "exit_params": exit_params,
-                "sizing_params": sizing_params,
+                "diagnosis": diagnosis,
+                "relevant_parameters": relevant_params,
+                "governance_rules": get_governance_rules(),
             }
             logger.info(
                 "strategy_context_built",
                 strategy=strategy,
                 version=version,
-                class_a=len(class_a),
-                class_b=len(class_b),
-                class_c=len(class_c),
-                exit_params=len(exit_params),
-                sizing_params=len(sizing_params),
+                diagnosis=diagnosis["primary_issue"],
+                relevant_params=len(relevant_params),
             )
         except Exception as e:
             logger.warning("strategy_context_failed", error=str(e), exc_info=True)
@@ -433,12 +586,29 @@ async def interpret_backtest(request: InterpretRequest):
             "strategy_context": strategy_context,
         }
 
-        # Build the full prompt (system + F-02 function prompt + structured input)
-        full_prompt = _build_full_prompt(
-            FunctionID.F02,
-            f"Interpret this backtest for {request.strategy_id} ({request.asset})",
-            structured_input,
+        # Build prompt WITHOUT the standard system prompt (which has "Citations or Silence"
+        # that causes Gemini to abstain when there are no KB chunks).
+        # Instead, use a data-interpretation-focused system prompt.
+        from pathlib import Path
+        prompts_dir = Path(__file__).parent.parent.parent / "prompts"
+        f02_prompt = (prompts_dir / "f02_backtest_interpreter.md").read_text(encoding="utf-8")
+
+        interpret_system = (
+            "You are the NARRUX aiTrate Co-Pilot — a backtest analysis engine. "
+            "You are interpreting PRE-COMPUTED tool outputs, not giving financial advice. "
+            "The Structured Input section contains all the data you need — TSI scores, "
+            "robustness analysis, exit drift metrics, and strategy parameters. "
+            "Your job is to EXPLAIN and INTERPRET this data. "
+            "Every factual claim must reference a specific number or metric from the Structured Input. "
+            "The Structured Input IS your verified source — cite values from it directly.\n\n"
+            "When suggesting parameter improvements, you MUST:\n"
+            "1. Read the diagnosis in strategy_context.diagnosis — it tells you what's wrong\n"
+            "2. Use strategy_context.relevant_parameters — only discuss these specific params\n"
+            "3. Give concrete values: 'change X from 2.5 to 2.0', not 'consider adjusting X'\n"
+            "4. Ground every suggestion in a specific metric from the tool outputs\n"
         )
+
+        full_prompt = f"{interpret_system}\n\n---\n\n{f02_prompt}\n\n## Structured Input\n```json\n{structured_input}\n```"
 
         # Call LLM directly (no RAG retrieval needed — all data is in structured_input)
         from config import get_settings
@@ -450,7 +620,8 @@ async def interpret_backtest(request: InterpretRequest):
         llm_request = LLMRequest(
             system_prompt=full_prompt,
             user_message=f"Interpret this backtest for {request.strategy_id} ({request.asset}). "
-                         f"Produce a full interpretive report with improvement suggestions.",
+                         f"Produce a full interpretive report following the F-02 workflow, "
+                         f"with specific data-driven improvement suggestions based on the diagnosis.",
             context_chunks=[],  # No RAG — all context is in structured_input
             model=model,
             max_tokens=settings.max_tokens_per_response,

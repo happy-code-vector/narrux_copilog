@@ -12,7 +12,7 @@ The structured_input JSON contains:
 - `tsi` — TSI scoring results (final_tsi, grade, period_metrics, stability, etc.)
 - `robustness` — DSR, worst-window, fragile-trade, TSI vs P&L cross-check
 - `drift` — exit quality metrics, drift estimate, worst exits
-- `strategy_context` — current parameters grouped by class, governance rules
+- `strategy_context` — **diagnosis** (what's wrong), **relevant_parameters** (only params tied to the issues), and **governance_rules**
 
 ## Interpretation Workflow
 
@@ -51,30 +51,35 @@ Explain the drift findings:
 - What does the worst exit pattern suggest?
 
 ### Step 6: Class-Aware Discount
-Using the strategy_context.parameters_by_class:
-- Identify which Class C (regime-coupled) parameters are active
+Using the `strategy_context.relevant_parameters`:
+- Identify which Class C (regime-coupled) parameters appear in the relevant set
 - Explain how this affects confidence in the results
 - Class C edges can vanish in regime shifts — discount accordingly
 
-### Step 7: Improvement Suggestions
-Based on ALL the data, suggest specific improvements:
+### Step 7: Improvement Suggestions (Data-Driven)
 
-**For robustness issues:**
-- If DSR inflation is high → suggest reducing parameter count or tightening bounds
-- If worst-window drops significantly → suggest reviewing exit parameters
-- If fragile trades detected → suggest position sizing adjustments
+You are given a **diagnosis** in `strategy_context.diagnosis` that tells you EXACTLY what's wrong. Use it.
 
-**For exit quality issues:**
-- If drift above baseline → suggest reviewing exit mechanism parameters
-- If low_capture exits dominate → suggest tighter trailing stops
-- If reversal exits dominate → suggest wider profit targets
+The diagnosis contains:
+- `primary_issue`: The #1 failure mode (e.g., "worst_window_fragility", "poor_exit_quality", "wide_stop_exits")
+- `issues`: Array of diagnosed problems with severity, detail, and relevant parameter categories
+- `relevant_parameters`: Only the parameters relevant to these issues — with current values and expected ranges
 
-**For governance compliance:**
-- Reference specific Class B parameters that could be retuned (quarterly cadence)
-- Warn against tuning Class C parameters (regime-coupled, never re-tune)
-- Note Class A parameters are set-and-forget (12+ month cadence)
+### How to produce suggestions:
 
-**Be specific:** Reference actual parameter names from strategy_context. Suggest direction (wider/narrower, higher/lower) not exact values.
+1. **Read the diagnosis first.** Your suggestions MUST address the diagnosed issues, not generic advice.
+2. **Use `relevant_parameters`** — these are the actual parameters that affect the problem. Reference them by name with their current value and expected range.
+3. **Ground every suggestion in data.** Quote the specific metric that's failing:
+   - ❌ "Class C parameters should never be re-tuned" (generic, useless)
+   - ✅ "Exit analysis shows 136/441 exits flagged as wide_stop with only 72.3% MFE capture. `StopMultiplier` is currently 2.5 (range: 1.5–3.0). Reducing to 2.0 would tighten stops and improve MFE capture toward 80%." (specific, data-driven)
+
+4. **Class A (Set & Forget):** Only suggest if their current value is outside `expected_range`. Example: *"ExitDelay is 24 but expected 12–16 — resetting to 14 addresses the worst-window fragility where July 2025 saw a 36-point TSI drop."*
+5. **Class B (Quarterly Drift):** These are the most actionable. Suggest specific adjustments with values. Example: *"TrailMult is 1.8 but worst-window exit quality was only 72% — tightening to 1.4 could improve MFE capture by ~5-8 points."*
+6. **Class C (Regime-Coupled):** DO NOT suggest re-tuning. Instead, suggest adding regime filters or monitoring: *"ATR_threshold is at 3.5 (near upper bound). Add a regime gate: skip entries when 14-day ATR > 3.0 to avoid trading in volatility spikes that caused the July 2025 drawdown."*
+7. **Sizing:** If MDD is close to 20%, suggest reducing risk_pct with specific numbers: *"MDD at 18.7% with DQ trigger at 20% — reducing risk_pct from 0.025 to 0.02 adds 2.5% margin."*
+8. **Always name the specific parameter** (e.g., `StopMultiplier`, `TrailMult`, `risk_pct`) and give a concrete value suggestion.
+9. **Always cite the diagnosed issue** that drives the recommendation: *"Addressing worst_window_fragility: ..."*
+10. **Rank by expected TSI impact.** Start with the change most likely to improve TSI.
 
 ### Step 8: Sources
 List the KB sources referenced (governance rules, parameter classes, strategy docs).
@@ -88,7 +93,7 @@ List the KB sources referenced (governance rules, parameter classes, strategy do
 5. **Robustness Analysis** — DSR, worst-window, fragile trades explained
 6. **Exit Quality** — Drift analysis and implications
 7. **Class-Coupling** — Which parameters affect confidence
-8. **Improvement Suggestions** — Specific, actionable recommendations
+8. **Improvement Suggestions** — Data-driven, specific to diagnosed issues, with parameter names and values
 9. **Sources** — KB references
 
 ## Rules
