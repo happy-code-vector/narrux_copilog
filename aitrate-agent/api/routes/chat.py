@@ -384,6 +384,15 @@ async def interpret_backtest(request: InterpretRequest):
             class_a = query_params_by_class("A", strategy=strategy, version=version)
             class_b = query_params_by_class("B", strategy=strategy, version=version)
             class_c = query_params_by_class("C", strategy=strategy, version=version)
+
+            # If version was specified but returned 0 results, fall back to latest
+            if version and len(class_a) == 0 and len(class_b) == 0 and len(class_c) == 0:
+                logger.info("version_not_found_falling_back", strategy=strategy, version=version)
+                version = None
+                class_a = query_params_by_class("A", strategy=strategy)
+                class_b = query_params_by_class("B", strategy=strategy)
+                class_c = query_params_by_class("C", strategy=strategy)
+
             exit_params = query_params_by_category("Exit logic", strategy=strategy) + \
                          query_params_by_category("Exit / Stop", strategy=strategy)
             sizing_params = query_params_by_category("Capital & Sizing", strategy=strategy)
@@ -404,8 +413,18 @@ async def interpret_backtest(request: InterpretRequest):
                 "exit_params": exit_params,
                 "sizing_params": sizing_params,
             }
+            logger.info(
+                "strategy_context_built",
+                strategy=strategy,
+                version=version,
+                class_a=len(class_a),
+                class_b=len(class_b),
+                class_c=len(class_c),
+                exit_params=len(exit_params),
+                sizing_params=len(sizing_params),
+            )
         except Exception as e:
-            logger.warning("strategy_context_failed", error=str(e))
+            logger.warning("strategy_context_failed", error=str(e), exc_info=True)
             # Continue without strategy context — LLM can still interpret tool outputs
 
         # Merge tool results + strategy context into structured_input
