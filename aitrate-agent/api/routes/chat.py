@@ -350,6 +350,7 @@ class InterpretRequest(BaseModel):
 
     tool_results: dict  # Full output from POST /chat/backtest
     strategy_id: str = "unknown"
+    version: str | None = None  # e.g. "v15.8" — parsed from filename
     asset: str = "unknown"
     adapter: str = "gemini"
 
@@ -377,17 +378,19 @@ async def interpret_backtest(request: InterpretRequest):
     try:
         # Build strategy context from registry.db using existing kb_lookup functions
         strategy = request.strategy_id.lower()
+        version = request.version  # e.g. "v15.8" or None for latest
         strategy_context = {}
         try:
-            class_a = query_params_by_class("A", strategy=strategy)
-            class_b = query_params_by_class("B", strategy=strategy)
-            class_c = query_params_by_class("C", strategy=strategy)
+            class_a = query_params_by_class("A", strategy=strategy, version=version)
+            class_b = query_params_by_class("B", strategy=strategy, version=version)
+            class_c = query_params_by_class("C", strategy=strategy, version=version)
             exit_params = query_params_by_category("Exit logic", strategy=strategy) + \
                          query_params_by_category("Exit / Stop", strategy=strategy)
             sizing_params = query_params_by_category("Capital & Sizing", strategy=strategy)
 
             strategy_context = {
                 "strategy": strategy,
+                "version": version or "latest",
                 "parameter_count": len(class_a) + len(class_b) + len(class_c),
                 "parameters_by_class": {
                     "A": class_a,

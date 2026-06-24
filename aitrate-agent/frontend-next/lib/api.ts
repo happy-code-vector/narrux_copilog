@@ -94,6 +94,7 @@ export async function uploadPortfolio(
 export async function interpretBacktest(
   toolResults: BacktestResult,
   strategyId: string = 'unknown',
+  version: string | null = null,
   asset: string = 'unknown',
 ): Promise<InterpretResult> {
   const resp = await fetch(`${API_BASE}/chat/backtest/interpret`, {
@@ -102,6 +103,7 @@ export async function interpretBacktest(
     body: JSON.stringify({
       tool_results: toolResults,
       strategy_id: strategyId,
+      version: version,
       asset: asset,
     }),
   });

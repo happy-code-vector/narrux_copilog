@@ -172,6 +172,43 @@ function formatBacktestResult(result: BacktestResult): string {
   return md;
 }
 
+/**
+ * Parse strategy ID and version from backtest filename.
+ *
+ * Expected patterns:
+ *   alpha_v15_8_backtest.xlsx  → { strategy: "alpha", version: "v15.8" }
+ *   master_v14_3.xlsx          → { strategy: "master", version: "v14.3" }
+ *   nrx_v1.xlsx                → { strategy: "nrx", version: "v1" }
+ *   alpha_backtest.xlsx        → { strategy: "alpha", version: null }
+ *   random.xlsx                → { strategy: "unknown", version: null }
+ */
+function parseStrategyFromFilename(filename: string): {
+  strategy: string;
+  version: string | null;
+} {
+  const name = filename.replace('.xlsx', '').replace('_backtest', '');
+
+  // Match: strategy_v{digits}_{digits}... or strategy_v{digits}.{digits}...
+  const match = name.match(
+    /^([a-zA-Z]+)[-_]v(\d+(?:[._]\d+)*)$/i,
+  );
+
+  if (match) {
+    const strategy = match[1].toLowerCase();
+    // Normalize version: v15_8 → v15.8, v14_3 → v14.3
+    const version = 'v' + match[2].replace(/_/g, '.');
+    return { strategy, version };
+  }
+
+  // No version found — try to extract just strategy name
+  const strategyMatch = name.match(/^([a-zA-Z]+)/);
+  if (strategyMatch) {
+    return { strategy: strategyMatch[1].toLowerCase(), version: null };
+  }
+
+  return { strategy: 'unknown', version: null };
+}
+
 function LoadingDots() {
   return (
     <div className="flex gap-2.5 items-center py-3">
@@ -303,8 +340,8 @@ export function ChatPanel({
 
         // Step 2: Run LLM interpretation (slower, adds narrative + suggestions)
         try {
-          const strategyId = file.name.replace('.xlsx', '').replace('_backtest', '');
-          const interp = await interpretBacktest(result, strategyId);
+          const { strategy, version } = parseStrategyFromFilename(file.name);
+          const interp = await interpretBacktest(result, strategy, version);
 
           const interpretMsg: Message = {
             id: randomId(),
