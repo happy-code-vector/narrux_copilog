@@ -206,6 +206,10 @@ def parse_backtest_xlsx(
         entry_price = _parse_float(row.get("price"))
         exit_reason = str(row.get("signal", "")).strip()
 
+        # MFE/MAE from TradingView "Run-up" and "Drawdown" columns
+        runup_usdt = _parse_float(row.get("runup_usdt")) or 0.0
+        drawdown_usdt = _parse_float(row.get("drawdown_usdt")) or 0.0
+
         trade = RawTrade(
             open_time=open_time,
             close_time=close_time,
@@ -214,6 +218,8 @@ def parse_backtest_xlsx(
             net_pnl_pct=net_pnl_pct,
             entry_price=entry_price,
             exit_reason=exit_reason,
+            runup_usdt=runup_usdt,
+            drawdown_usdt=drawdown_usdt,
         )
 
         # Dedup
@@ -266,7 +272,7 @@ def parse_backtest_xlsx(
             win_rate=round(win_rate, 4),
             profit_factor=round(profit_factor, 3),
             net_pnl=round(total_pnl, 2),
-            net_pnl_pct=round(sum(t.net_pnl_pct for t in raw_trades), 4),
+            net_pnl_pct=round((total_pnl / capital_basis) * 100, 4) if capital_basis > 0 else 0.0,
             max_drawdown_pct=round(max_dd, 4),
             sharpe_ratio=round(sharpe, 3),
             stop_loss_count=sum(1 for t in raw_trades if "stop loss" in t.exit_reason.lower()),

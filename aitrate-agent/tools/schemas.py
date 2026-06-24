@@ -205,6 +205,8 @@ class RawTrade(BaseModel):
     exit_price: float | None = None
     exit_reason: str = ""
     partial_count: int = 1
+    runup_usdt: float = 0.0  # MFE — peak unrealized profit during trade
+    drawdown_usdt: float = 0.0  # MAE — max unrealized loss during trade
 
 
 # ─── TSI ─────────────────────────────────────────────────────────────────────

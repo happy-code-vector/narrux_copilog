@@ -25,9 +25,9 @@ def _mfe_capture_pct(net_pnl: float, mfe: float) -> float:
     """What percentage of the maximum favorable excursion was captured.
 
     MFE = peak unrealized profit during the trade.
-    If MFE = 0, return 0.
+    Only meaningful for winners — returns 0 for losers.
     """
-    if mfe <= 0:
+    if mfe <= 0 or net_pnl <= 0:
         return 0.0
     return (net_pnl / mfe) * 100.0
 
@@ -94,7 +94,7 @@ def analyze_exit_drift(
         )
 
     exit_flags: list[ExitQualityFlag] = []
-    mfe_captures: list[float] = []
+    mfe_captures: list[float] = []  # Only for winners
 
     for i, trade in enumerate(raw_trades):
         # Extract MFE/MAE — handle both RawTrade and dict-like access
@@ -109,7 +109,8 @@ def analyze_exit_drift(
         mae = min(0.0, float(mae)) if mae else 0.0
 
         mfe_cap = _mfe_capture_pct(net_pnl, mfe)
-        if mfe > 0:
+        # Only include winners in exit quality average — losers are classified by issue type
+        if net_pnl > 0 and mfe > 0:
             mfe_captures.append(mfe_cap)
 
         issue = _classify_exit_issue(net_pnl, mfe, mae, mfe_cap)
