@@ -1,4 +1,4 @@
-import type { ChatResponse, KBStats, HealthResponse, BacktestResult, PortfolioResult } from './types';
+import type { ChatResponse, KBStats, HealthResponse, BacktestResult, PortfolioResult, InterpretResult } from './types';
 
 const API_BASE = '/api';
 
@@ -85,6 +85,29 @@ export async function uploadPortfolio(
 
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(err.detail || `HTTP ${resp.status}`);
+  }
+
+  return resp.json();
+}
+
+export async function interpretBacktest(
+  toolResults: BacktestResult,
+  strategyId: string = 'unknown',
+  asset: string = 'unknown',
+): Promise<InterpretResult> {
+  const resp = await fetch(`${API_BASE}/chat/backtest/interpret`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      tool_results: toolResults,
+      strategy_id: strategyId,
+      asset: asset,
+    }),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: 'Interpretation failed' }));
     throw new Error(err.detail || `HTTP ${resp.status}`);
   }
 

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageBubble } from './MessageBubble';
 import { Welcome } from './Welcome';
-import { sendChatMessage, uploadBacktest } from '@/lib/api';
+import { sendChatMessage, uploadBacktest, interpretBacktest } from '@/lib/api';
 import type { Message, BacktestResult } from '@/lib/types';
 
 function randomId(): string {
@@ -269,8 +269,11 @@ export function ChatPanel({
       onNewMessages([userMsg]);
 
       try {
+        // Step 1: Run deterministic tools (fast)
         const result = await uploadBacktest(file);
-        const assistantMsg: Message = {
+
+        // Show data tables immediately
+        const dataMsg: Message = {
           id: randomId(),
           role: 'assistant',
           content: formatBacktestResult(result),
@@ -278,7 +281,26 @@ export function ChatPanel({
           functionId: 'F-02',
           confidence: 'high',
         };
-        onNewMessages([assistantMsg]);
+        onNewMessages([dataMsg]);
+
+        // Step 2: Run LLM interpretation (slower, adds narrative + suggestions)
+        try {
+          const strategyId = file.name.replace('.xlsx', '').replace('_backtest', '');
+          const interp = await interpretBacktest(result, strategyId);
+
+          const interpretMsg: Message = {
+            id: randomId(),
+            role: 'assistant',
+            content: `## 🧠 AI Interpretation\n\n${interp.interpretation}\n\n---\n*Model: ${interp.model} | Tokens: ${interp.input_tokens + interp.output_tokens} | Cost: $${interp.cost_usd.toFixed(4)}*`,
+            timestamp: new Date(),
+            functionId: 'F-02',
+            confidence: 'high',
+          };
+          onNewMessages([interpretMsg]);
+        } catch (interpErr) {
+          // Interpretation failure is non-fatal — data tables already shown
+          console.warn('LLM interpretation failed:', interpErr);
+        }
       } catch (err) {
         const errorMsg: Message = {
           id: randomId(),

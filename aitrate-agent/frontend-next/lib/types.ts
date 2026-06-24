@@ -129,6 +129,14 @@ export interface BacktestResult {
   trades_parsed: number;
 }
 
+export interface InterpretResult {
+  interpretation: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'error';

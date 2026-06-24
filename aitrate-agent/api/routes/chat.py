@@ -336,3 +336,107 @@ async def chat_portfolio(
     except Exception as e:
         logger.error("portfolio_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class InterpretRequest(BaseModel):
+    """Request for LLM interpretation of backtest results."""
+
+    tool_results: dict  # Full output from POST /chat/backtest
+    strategy_id: str = "unknown"
+    asset: str = "unknown"
+    adapter: str = "gemini"
+
+
+@router.post("/chat/backtest/interpret")
+async def interpret_backtest(request: InterpretRequest):
+    """Run LLM interpretation on backtest tool outputs.
+
+    Takes the JSON output from POST /chat/backtest, adds strategy context
+    from registry.db, and calls the LLM with the F-02 prompt to produce
+    an interpretive narrative with improvement suggestions.
+    """
+    from orchestration.agent import run, _build_full_prompt
+    from orchestration.llm_client import LLMRequest, get_llm_client
+    from tools.kb_lookup import (
+        query_params_by_class,
+        query_params_by_category,
+        get_governance_rules,
+        get_filter_class_defs,
+    )
+    from tools.schemas import FunctionID
+
+    logger.info("interpret_backtest", strategy_id=request.strategy_id)
+
+    try:
+        # Build strategy context from registry.db using existing kb_lookup functions
+        strategy = request.strategy_id.lower()
+        strategy_context = {}
+        try:
+            class_a = query_params_by_class("A", strategy=strategy)
+            class_b = query_params_by_class("B", strategy=strategy)
+            class_c = query_params_by_class("C", strategy=strategy)
+            exit_params = query_params_by_category("Exit logic", strategy=strategy) + \
+                         query_params_by_category("Exit / Stop", strategy=strategy)
+            sizing_params = query_params_by_category("Capital & Sizing", strategy=strategy)
+
+            strategy_context = {
+                "strategy": strategy,
+                "parameter_count": len(class_a) + len(class_b) + len(class_c),
+                "parameters_by_class": {
+                    "A": class_a,
+                    "B": class_b,
+                    "C": class_c,
+                },
+                "governance": {
+                    "governance_rules": get_governance_rules(),
+                    "filter_classes": get_filter_class_defs(),
+                },
+                "exit_params": exit_params,
+                "sizing_params": sizing_params,
+            }
+        except Exception as e:
+            logger.warning("strategy_context_failed", error=str(e))
+            # Continue without strategy context — LLM can still interpret tool outputs
+
+        # Merge tool results + strategy context into structured_input
+        structured_input = {
+            **request.tool_results,
+            "strategy_context": strategy_context,
+        }
+
+        # Build the full prompt (system + F-02 function prompt + structured input)
+        full_prompt = _build_full_prompt(
+            FunctionID.F02,
+            f"Interpret this backtest for {request.strategy_id} ({request.asset})",
+            structured_input,
+        )
+
+        # Call LLM directly (no RAG retrieval needed — all data is in structured_input)
+        from config import get_settings
+        settings = get_settings()
+
+        llm_client = get_llm_client(request.adapter)
+        model = settings.gemini_model_primary if request.adapter == "gemini" else settings.anthropic_model_primary
+
+        llm_request = LLMRequest(
+            system_prompt=full_prompt,
+            user_message=f"Interpret this backtest for {request.strategy_id} ({request.asset}). "
+                         f"Produce a full interpretive report with improvement suggestions.",
+            context_chunks=[],  # No RAG — all context is in structured_input
+            model=model,
+            max_tokens=settings.max_tokens_per_response,
+        )
+
+        llm_response = await llm_client.complete(llm_request)
+
+        return {
+            "interpretation": llm_response.content,
+            "model": llm_response.model,
+            "input_tokens": llm_response.input_tokens,
+            "output_tokens": llm_response.output_tokens,
+            "cost_usd": llm_response.cost_usd,
+        }
+
+    except Exception as e:
+        logger.error("interpret_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
