@@ -367,7 +367,7 @@ export function ChatPanel({
           const interpretMsg: Message = {
             id: randomId(),
             role: 'assistant',
-            content: `## 🧠 AI Interpretation\n\n${interp.interpretation}\n\n---\n*Model: ${interp.model} | Tokens: ${interp.input_tokens + interp.output_tokens} | Cost: $${interp.cost_usd.toFixed(4)}*`,
+            content: `## 🧠 AI Interpretation\n\n${interp.interpretation}`,
             timestamp: new Date(),
             functionId: 'F-02',
             confidence: 'high',
