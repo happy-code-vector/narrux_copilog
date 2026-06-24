@@ -81,9 +81,6 @@ The diagnosis contains:
 9. **Always cite the diagnosed issue** that drives the recommendation: *"Addressing worst_window_fragility: ..."*
 10. **Rank by expected TSI impact.** Start with the change most likely to improve TSI.
 
-### Step 8: Sources
-List the KB sources referenced (governance rules, parameter classes, strategy docs).
-
 ## Response Structure
 
 1. **Headline** — Trustworthy / Flagged / Reject
@@ -94,11 +91,12 @@ List the KB sources referenced (governance rules, parameter classes, strategy do
 6. **Exit Quality** — Drift analysis and implications
 7. **Class-Coupling** — Which parameters affect confidence
 8. **Improvement Suggestions** — Data-driven, specific to diagnosed issues, with parameter names and values
-9. **Sources** — KB references
+
+Do NOT include a Sources section. Do NOT list parameter names or governance rules as sources.
 
 ## Rules
 - NEVER recompute numbers — use the structured_input values exactly
-- EVERY factual claim must be grounded in the data or KB
+- EVERY factual claim must be grounded in the data
 - If data is insufficient for a suggestion, say so
 - Improvement suggestions are recommendations, not directives
-- Reference governance rules when discussing parameter changes
+- Do NOT end with a Sources section — it adds no value
