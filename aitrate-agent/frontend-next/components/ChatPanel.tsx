@@ -48,9 +48,27 @@ function formatBacktestResult(result: BacktestResult): string {
   md += `| Total Trades | ${summary.total_trades} |\n`;
   md += `| Win Rate | ${summary.win_rate.toFixed(1)}% |\n`;
   md += `| Profit Factor | ${summary.profit_factor.toFixed(2)} |\n`;
-  md += `| Net P&L | ${summary.net_pnl.toFixed(2)}% |\n`;
+  md += `| Net P&L | ${summary.net_pnl_pct.toFixed(2)}% (${summary.net_pnl.toFixed(2)} USDT) |\n`;
   md += `| Max Drawdown | ${summary.max_drawdown_pct.toFixed(2)}% |\n`;
-  md += `| Stop-Loss Ratio | ${(summary.stop_loss_ratio * 100).toFixed(1)}% |\n`;
+  md += `| Sharpe Ratio | ${summary.sharpe_ratio.toFixed(3)} |\n`;
+  md += `| Capital Basis | ${summary.capital_basis.toLocaleString()} USDT |\n`;
+  md += `| Stop-Loss Count | ${summary.stop_loss_count} (${(summary.stop_loss_ratio * 100).toFixed(1)}%) |\n`;
+  md += `| Execution Mode | ${summary.execution_mode} |\n`;
+
+  // ── Execution Flags ──
+  const execFlags: string[] = [];
+  if (summary.calc_on_order_fills) {
+    execFlags.push('⚠️ `calc_on_order_fills` is TRUE (must be false for live parity)');
+  }
+  if (summary.process_orders_on_close) {
+    execFlags.push('⚠️ `process_orders_on_close` is TRUE (confirm close-action live parity)');
+  }
+  if (execFlags.length > 0) {
+    md += `\n### ⚠️ Execution Flags\n\n`;
+    execFlags.forEach((f) => {
+      md += `- ${f}\n`;
+    });
+  }
 
   // ── TSI Details ──
   md += `\n### TSI Details\n\n`;

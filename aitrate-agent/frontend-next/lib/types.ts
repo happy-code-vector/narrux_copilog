@@ -112,8 +112,15 @@ export interface BacktestResult {
     win_rate: number;
     profit_factor: number;
     net_pnl: number;
+    net_pnl_pct: number;
     max_drawdown_pct: number;
+    sharpe_ratio: number;
+    stop_loss_count: number;
     stop_loss_ratio: number;
+    capital_basis: number;
+    calc_on_order_fills: boolean;
+    process_orders_on_close: boolean;
+    execution_mode: string;
   };
   tsi: {
     final_tsi: number;
