@@ -130,6 +130,30 @@ async def chat_backtest(
             strategy_id=strategy_id, asset=asset,
         )
 
+        # Compute robustness analysis
+        from tools.tsi_engine import aggregate_logical
+        from tools.robustness_engine import analyze_robustness
+        from tools.drift_analyzer import analyze_exit_drift
+
+        logical_trades = aggregate_logical(raw_trades)
+
+        # Get 12mo Sharpe for DSR
+        sharpe_12mo = 0.0
+        for pm in tsi_result.period_metrics:
+            if pm.period == "12mo":
+                sharpe_12mo = pm.sharpe_ann
+                break
+
+        robustness = analyze_robustness(
+            trades=logical_trades,
+            capital_basis=capital_basis,
+            tsi_final=tsi_result.final_tsi,
+            period_metrics=tsi_result.period_metrics,
+            sharpe_ann=sharpe_12mo,
+        )
+
+        drift = analyze_exit_drift(raw_trades, logical_trades)
+
         # Cleanup
         tmp_path.unlink(missing_ok=True)
 
@@ -162,9 +186,153 @@ async def chat_backtest(
                     for pm in tsi_result.period_metrics
                 ],
             },
+            "robustness": {
+                "raw_sharpe": robustness.raw_sharpe,
+                "dsr": robustness.dsr,
+                "dsr_inflation_pct": robustness.dsr_inflation_pct,
+                "n_trials": robustness.n_trials,
+                "overall_robust": robustness.overall_robust,
+                "worst_window": {
+                    "window_size": robustness.worst_window.window_size,
+                    "worst_composite": robustness.worst_window.worst_composite,
+                    "worst_period_start": str(robustness.worst_window.worst_period_start),
+                    "worst_period_end": str(robustness.worst_window.worst_period_end),
+                    "full_sample_composite": robustness.worst_window.full_sample_composite,
+                    "drop_points": robustness.worst_window.drop_points,
+                    "n_windows_tested": robustness.worst_window.n_windows_tested,
+                },
+                "fragile_trade": [
+                    {
+                        "k": f.k,
+                        "removed_pnl": f.removed_pnl,
+                        "tsi_without": f.tsi_without,
+                        "tsi_full": f.tsi_full,
+                        "tsi_drop": f.tsi_drop,
+                        "fragile": f.fragile,
+                    }
+                    for f in robustness.fragile_trade
+                ],
+                "tsi_pnl_crosscheck": {
+                    "aligned": robustness.tsi_pnl_crosscheck.aligned,
+                    "tsi_trend": robustness.tsi_pnl_crosscheck.tsi_trend,
+                    "pnl_trend": robustness.tsi_pnl_crosscheck.pnl_trend,
+                    "artifact_flag": robustness.tsi_pnl_crosscheck.artifact_flag,
+                    "note": robustness.tsi_pnl_crosscheck.note,
+                },
+            },
+            "drift": {
+                "avg_exit_quality": drift.avg_exit_quality,
+                "exits_flagged": drift.exits_flagged,
+                "total_exits": drift.total_exits,
+                "drift_estimate_pct": drift.drift_estimate_pct,
+                "baseline_pct": drift.baseline_pct,
+                "above_baseline": drift.above_baseline,
+                "worst_exits": [
+                    {
+                        "trade_index": we.trade_index,
+                        "close_time": str(we.close_time),
+                        "side": we.side,
+                        "net_pnl": we.net_pnl,
+                        "mfe": we.mfe,
+                        "mae": we.mae,
+                        "mfe_capture_pct": we.mfe_capture_pct,
+                        "issue": we.issue,
+                    }
+                    for we in drift.worst_exits[:5]  # Top 5 worst exits
+                ],
+            },
             "trades_parsed": len(raw_trades),
         }
 
     except Exception as e:
         logger.error("backtest_error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/chat/portfolio")
+async def chat_portfolio(
+    files: list[UploadFile] = File(...),
+    capital_basis: float = Form(100000.0),
+):
+    """Upload multiple backtest xlsx files → portfolio correlation analysis.
+
+    Returns pairwise correlation matrix, diversification ratio, and kill zone check.
+    """
+    import tempfile
+    from pathlib import Path
+    from tools.backtest_parser import parse_backtest_xlsx
+    from tools.tsi_engine import aggregate_logical
+    from tools.portfolio_metrics import compute_portfolio_metrics
+
+    if len(files) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="At least 2 backtest files required for portfolio analysis.",
+        )
+
+    logger.info("portfolio_upload", file_count=len(files))
+
+    try:
+        strategy_pnl: dict[str, list[float]] = {}
+        strategy_capital: dict[str, float] = {}
+        tmp_paths: list[Path] = []
+
+        for file in files:
+            if not file.filename or not file.filename.endswith(".xlsx"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Only .xlsx files supported. Got: {file.filename}",
+                )
+
+            # Extract strategy name from filename
+            strategy_id = file.filename.replace(".xlsx", "").replace("_backtest", "")
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                content = await file.read()
+                tmp.write(content)
+                tmp_path = Path(tmp.name)
+                tmp_paths.append(tmp_path)
+
+            # Parse
+            raw_trades, summary = parse_backtest_xlsx(
+                tmp_path, capital_basis=capital_basis,
+                strategy_id=strategy_id, asset="unknown",
+            )
+
+            # Aggregate to logical trades for daily P&L
+            logical = aggregate_logical(raw_trades)
+
+            # Build daily P&L series
+            from datetime import date
+            daily: dict[date, float] = {}
+            for t in logical:
+                d = t.close_time.date()
+                daily[d] = daily.get(d, 0.0) + t.net_pnl
+
+            strategy_pnl[strategy_id] = list(daily.values())
+            strategy_capital[strategy_id] = capital_basis
+
+        # Cleanup temp files
+        for p in tmp_paths:
+            p.unlink(missing_ok=True)
+
+        # Compute portfolio metrics
+        result = compute_portfolio_metrics(strategy_pnl, strategy_capital)
+
+        return {
+            "strategies": result.strategies,
+            "correlation_matrix": result.correlation_matrix,
+            "avg_pairwise_rho": result.avg_pairwise_rho,
+            "min_pairwise_rho": result.min_pairwise_rho,
+            "max_pairwise_rho": result.max_pairwise_rho,
+            "diversification_ratio": result.diversification_ratio,
+            "kill_zone_active": result.kill_zone_active,
+            "triggering_pairs": result.triggering_pairs,
+            "n_strategies": result.n_strategies,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("portfolio_error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

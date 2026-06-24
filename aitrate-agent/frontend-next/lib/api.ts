@@ -1,4 +1,4 @@
-import type { ChatResponse, KBStats, HealthResponse, BacktestResult } from './types';
+import type { ChatResponse, KBStats, HealthResponse, BacktestResult, PortfolioResult } from './types';
 
 const API_BASE = '/api';
 
@@ -58,6 +58,27 @@ export async function uploadBacktest(
   formData.append('capital_basis', String(capitalBasis));
 
   const resp = await fetch(`${API_BASE}/chat/backtest`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(err.detail || `HTTP ${resp.status}`);
+  }
+
+  return resp.json();
+}
+
+export async function uploadPortfolio(
+  files: File[],
+  capitalBasis: number = 100000,
+): Promise<PortfolioResult> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+  formData.append('capital_basis', String(capitalBasis));
+
+  const resp = await fetch(`${API_BASE}/chat/portfolio`, {
     method: 'POST',
     body: formData,
   });

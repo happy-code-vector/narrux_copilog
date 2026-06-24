@@ -257,6 +257,100 @@ class TSIResult(BaseModel):
         return caps.get(self.grade.value, 0.0)
 
 
+# ─── Robustness Analysis ────────────────────────────────────────────────────
+
+
+class WorstWindowResult(BaseModel):
+    """Worst-window robustness analysis."""
+
+    window_size: int = 30
+    worst_composite: float
+    worst_period_start: datetime
+    worst_period_end: datetime
+    full_sample_composite: float
+    drop_points: float  # how much worse than full sample
+    n_windows_tested: int
+
+
+class FragileTradeResult(BaseModel):
+    """Leave-K-out fragile trade dependency analysis."""
+
+    k: int
+    removed_pnl: list[float]
+    tsi_without: float
+    tsi_full: float
+    tsi_drop: float
+    fragile: bool  # True if drop > 10 points
+
+
+class TSIPnLCrossCheck(BaseModel):
+    """TSI vs P&L trend alignment check."""
+
+    aligned: bool
+    tsi_trend: str  # "rising" | "falling" | "flat"
+    pnl_trend: str  # "rising" | "falling" | "flat"
+    artifact_flag: bool  # True if TSI rising but P&L flat/falling
+    note: str
+
+
+class RobustnessResult(BaseModel):
+    """Complete robustness analysis output."""
+
+    raw_sharpe: float
+    dsr: float
+    dsr_inflation_pct: float
+    n_trials: int
+    worst_window: WorstWindowResult
+    fragile_trade: list[FragileTradeResult]
+    tsi_pnl_crosscheck: TSIPnLCrossCheck
+    overall_robust: bool  # True if no critical flags
+
+
+# ─── Drift Analysis ─────────────────────────────────────────────────────────
+
+
+class ExitQualityFlag(BaseModel):
+    """A single exit flagged for poor quality."""
+
+    trade_index: int
+    close_time: datetime
+    side: str
+    net_pnl: float
+    mfe: float  # max favorable excursion
+    mae: float  # max adverse excursion
+    mfe_capture_pct: float  # how much of MFE was captured
+    issue: str  # "low_capture" | "reversal" | "wide_stop"
+
+
+class DriftAnalysisResult(BaseModel):
+    """Exit quality and drift estimation from backtest data."""
+
+    avg_exit_quality: float  # avg MFE capture % across all exits
+    worst_exits: list[ExitQualityFlag]
+    exits_flagged: int
+    total_exits: int
+    drift_estimate_pct: float
+    baseline_pct: float = 0.19  # Bar Magnifier baseline
+    above_baseline: bool
+
+
+# ─── Portfolio Metrics ───────────────────────────────────────────────────────
+
+
+class PortfolioResult(BaseModel):
+    """Portfolio-level correlation and diversification analysis."""
+
+    strategies: list[str]
+    correlation_matrix: dict[str, dict[str, float]]  # {sym_a: {sym_b: rho}}
+    avg_pairwise_rho: float
+    min_pairwise_rho: float
+    max_pairwise_rho: float
+    diversification_ratio: float  # 1 / (1 + avg_rho)
+    kill_zone_active: bool
+    triggering_pairs: list[str]  # pairs with rho >= 0.30 AND tail >= 20%
+    n_strategies: int
+
+
 # ─── Recommendations ─────────────────────────────────────────────────────────
 
 

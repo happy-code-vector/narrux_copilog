@@ -30,7 +30,7 @@ const FUNCTIONS = [
 ];
 
 function formatBacktestResult(result: BacktestResult): string {
-  const { summary, tsi, trades_parsed } = result;
+  const { summary, tsi, robustness, drift, trades_parsed } = result;
   const gradeEmoji: Record<string, string> = {
     S: '🟢', A: '🔵', B: '🟡', C: '🟠', D: '🔴',
   };
@@ -38,6 +38,11 @@ function formatBacktestResult(result: BacktestResult): string {
   let md = `## ${gradeEmoji[tsi.grade] ?? '⚪'} TSI Grade: ${tsi.grade} (${tsi.final_tsi.toFixed(1)})\n\n`;
   md += `**Trades parsed:** ${trades_parsed}\n\n`;
 
+  // ── Headline: Trustworthy / Flagged ──
+  const headline = robustness?.overall_robust ? '✅ **Trustworthy**' : '⚠️ **Flagged**';
+  md += `### ${headline}\n\n`;
+
+  // ── Summary ──
   md += `### Summary\n\n`;
   md += `| Metric | Value |\n|---|---|\n`;
   md += `| Total Trades | ${summary.total_trades} |\n`;
@@ -47,12 +52,14 @@ function formatBacktestResult(result: BacktestResult): string {
   md += `| Max Drawdown | ${summary.max_drawdown_pct.toFixed(2)}% |\n`;
   md += `| Stop-Loss Ratio | ${(summary.stop_loss_ratio * 100).toFixed(1)}% |\n`;
 
+  // ── TSI Details ──
   md += `\n### TSI Details\n\n`;
   md += `| Metric | Value |\n|---|---|\n`;
   md += `| Stability | ${tsi.stability.toFixed(1)} |\n`;
   md += `| Leverage Cap | ${tsi.leverage_cap.toFixed(1)}x |\n`;
   md += `| Catastrophic Floor | ${tsi.catastrophic_floor ? 'Yes ⚠️' : 'No'} |\n`;
 
+  // ── DQ Triggers ──
   if (tsi.dq_triggers.length > 0) {
     md += `\n### ⚠️ DQ Triggers\n\n`;
     tsi.dq_triggers.forEach((t) => {
@@ -60,6 +67,7 @@ function formatBacktestResult(result: BacktestResult): string {
     });
   }
 
+  // ── Period Metrics ──
   if (tsi.period_metrics.length > 0) {
     md += `\n### Period Metrics\n\n`;
     md += `| Period | Trades | WR% | PF | MDD% | Composite | Flag |\n|---|---|---|---|---|---|---|\n`;
@@ -69,8 +77,78 @@ function formatBacktestResult(result: BacktestResult): string {
     });
   }
 
+  // ── Robustness (§5) ──
+  if (robustness) {
+    md += `\n### Robustness\n\n`;
+
+    // DSR
+    md += `**Deflated Sharpe Ratio (DSR)**\n\n`;
+    md += `| Metric | Value |\n|---|---|\n`;
+    md += `| Raw Sharpe | ${robustness.raw_sharpe.toFixed(3)} |\n`;
+    md += `| DSR | ${robustness.dsr.toFixed(3)} |\n`;
+    md += `| Inflation | ${robustness.dsr_inflation_pct.toFixed(1)}% |\n`;
+    if (robustness.dsr_inflation_pct > 50) {
+      md += `\n> ⚠️ High multiple-testing inflation — raw Sharpe is unreliable.\n`;
+    }
+
+    // Worst window
+    const ww = robustness.worst_window;
+    md += `\n**Worst-Window Analysis**\n\n`;
+    md += `| Metric | Value |\n|---|---|\n`;
+    md += `| Window Size | ${ww.window_size} trades |\n`;
+    md += `| Worst Composite | ${ww.worst_composite.toFixed(1)} |\n`;
+    md += `| Full-Sample Composite | ${ww.full_sample_composite.toFixed(1)} |\n`;
+    md += `| Drop | ${ww.drop_points.toFixed(1)} points |\n`;
+    md += `| Windows Tested | ${ww.n_windows_tested} |\n`;
+    if (ww.drop_points > 20) {
+      md += `\n> ⚠️ Severe worst-window drop — strategy edge may be fragile.\n`;
+    }
+
+    // Fragile trade
+    const fragileItems = robustness.fragile_trade.filter((f) => f.fragile);
+    if (fragileItems.length > 0) {
+      md += `\n**⚠️ Fragile Trade Dependency**\n\n`;
+      fragileItems.forEach((f) => {
+        md += `- Removing top ${f.k} trades drops TSI by **${f.tsi_drop.toFixed(1)}** points (${f.tsi_full.toFixed(1)} → ${f.tsi_without.toFixed(1)})\n`;
+      });
+    }
+
+    // TSI vs P&L cross-check
+    const cc = robustness.tsi_pnl_crosscheck;
+    md += `\n**TSI vs P&L Cross-Check**\n\n`;
+    md += `- TSI trend: **${cc.tsi_trend}** | P&L trend: **${cc.pnl_trend}**\n`;
+    if (cc.artifact_flag) {
+      md += `- ⚠️ **Re-adjustment artifact detected** — ${cc.note}\n`;
+    } else {
+      md += `- ✅ ${cc.note}\n`;
+    }
+  }
+
+  // ── Exit Quality / Drift (§3.3) ──
+  if (drift) {
+    md += `\n### Exit Quality\n\n`;
+    md += `| Metric | Value |\n|---|---|\n`;
+    md += `| Avg MFE Capture | ${drift.avg_exit_quality.toFixed(1)}% |\n`;
+    md += `| Exits Flagged | ${drift.exits_flagged} / ${drift.total_exits} |\n`;
+    md += `| Drift Estimate | ${(drift.drift_estimate_pct * 100).toFixed(2)}% |\n`;
+    md += `| Bar Magnifier Baseline | ${(drift.baseline_pct * 100).toFixed(2)}% |\n`;
+    if (drift.above_baseline) {
+      md += `\n> ⚠️ Estimated drift exceeds Bar Magnifier baseline.\n`;
+    }
+
+    if (drift.worst_exits.length > 0) {
+      md += `\n**Worst Exits**\n\n`;
+      md += `| # | Date | Side | P&L | MFE | Capture% | Issue |\n|---|---|---|---|---|---|---|\n`;
+      drift.worst_exits.forEach((we) => {
+        const date = new Date(we.close_time).toLocaleDateString();
+        md += `| ${we.trade_index} | ${date} | ${we.side} | ${we.net_pnl.toFixed(2)} | ${we.mfe.toFixed(2)} | ${we.mfe_capture_pct.toFixed(0)}% | ${we.issue} |\n`;
+      });
+    }
+  }
+
+  // ── SL ratio warning ──
   if (summary.stop_loss_ratio > 0.4) {
-    md += `\n> ⚠️ **Stop-loss ratio > 40%** — review stop placement. This may indicate stops are too wide relative to take-profit targets.\n`;
+    md += `\n> ⚠️ **Stop-loss ratio > 40%** — review stop placement.\n`;
   }
 
   return md;

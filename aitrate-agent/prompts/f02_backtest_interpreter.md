@@ -24,12 +24,15 @@ TSI up + P&L flat = re-adjustment artefact, not improvement. Cross-check TSI mov
 >40% over last 20 trades = regime-stress emergency-brake signal. Flag prominently.
 
 ### Step 6: Bar Magnifier Drift
-Baseline ~0.19% per exit. Attribute drift to specific exits. Flag if significantly above baseline.
+Baseline ~0.19% per exit. If structured input contains `drift` data, use the computed drift_estimate_pct and worst_exits. Flag if above baseline.
 
 ### Step 7: Robustness
-- DSR vs raw Sharpe: high raw + low DSR = overfitting
-- Worst-window analysis
-- Trade count significance
+If structured input contains `robustness` data, use it directly:
+- DSR: compare raw_sharpe vs dsr. High inflation_pct = overfitting.
+- Worst-window: report worst_composite and drop_points.
+- Fragile-trade: report any leave-K-out results where fragile=true.
+- TSI vs P&L cross-check: report artifact_flag if true.
+Do NOT attempt to recompute these — they are deterministic tool outputs.
 
 ### Step 8: Class-Aware Discount
 Class C edges are regime-coupled. Discount confidence accordingly.
