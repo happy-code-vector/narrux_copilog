@@ -35,7 +35,7 @@ function formatBacktestResult(result: BacktestResult): string {
     S: '🟢', A: '🔵', B: '🟡', C: '🟠', D: '🔴',
   };
 
-  let md = `## ${gradeEmoji[tsi.grade] ?? '⚪'} TSI Grade: ${tsi.grade} (${tsi.final_tsi.toFixed(1)})\n\n`;
+  let md = `## ${gradeEmoji[tsi.grade] ?? '⚪'} TSI Grade: ${tsi.grade} (${tsi.final_tsi.toFixed(2)})\n\n`;
   md += `**Trades parsed:** ${trades_parsed}\n\n`;
 
   // ── Headline: Trustworthy / Flagged ──
@@ -46,13 +46,13 @@ function formatBacktestResult(result: BacktestResult): string {
   md += `### Summary\n\n`;
   md += `| Metric | Value |\n|---|---|\n`;
   md += `| Total Trades | ${summary.total_trades} |\n`;
-  md += `| Win Rate | ${summary.win_rate.toFixed(1)}% |\n`;
-  md += `| Profit Factor | ${summary.profit_factor.toFixed(2)} |\n`;
+  md += `| Win Rate | ${(summary.win_rate * 100).toFixed(2)}% |\n`;
+  md += `| Profit Factor | ${summary.profit_factor.toFixed(3)} |\n`;
   md += `| Net P&L | ${summary.net_pnl_pct.toFixed(2)}% (${summary.net_pnl.toFixed(2)} USDT) |\n`;
   md += `| Max Drawdown | ${summary.max_drawdown_pct.toFixed(2)}% |\n`;
   md += `| Sharpe Ratio | ${summary.sharpe_ratio.toFixed(3)} |\n`;
   md += `| Capital Basis | ${summary.capital_basis.toLocaleString()} USDT |\n`;
-  md += `| Stop-Loss Count | ${summary.stop_loss_count} (${(summary.stop_loss_ratio * 100).toFixed(1)}%) |\n`;
+  md += `| Stop-Loss Count | ${summary.stop_loss_count} (${(summary.stop_loss_ratio * 100).toFixed(2)}%) |\n`;
   md += `| Execution Mode | ${summary.execution_mode} |\n`;
 
   // ── Execution Flags ──
@@ -73,7 +73,7 @@ function formatBacktestResult(result: BacktestResult): string {
   // ── TSI Details ──
   md += `\n### TSI Details\n\n`;
   md += `| Metric | Value |\n|---|---|\n`;
-  md += `| Stability | ${tsi.stability.toFixed(1)} |\n`;
+  md += `| Stability | ${tsi.stability.toFixed(3)} |\n`;
   md += `| Leverage Cap | ${tsi.leverage_cap.toFixed(1)}x |\n`;
   md += `| Catastrophic Floor | ${tsi.catastrophic_floor ? 'Yes ⚠️' : 'No'} |\n`;
 
@@ -91,7 +91,7 @@ function formatBacktestResult(result: BacktestResult): string {
     md += `| Period | Trades | WR% | PF | MDD% | Composite | Flag |\n|---|---|---|---|---|---|---|\n`;
     tsi.period_metrics.forEach((pm) => {
       const flag = pm.insufficient_sample ? '⚠️ low n' : '';
-      md += `| ${pm.period} | ${pm.n} | ${pm.win_rate.toFixed(1)} | ${pm.profit_factor.toFixed(2)} | ${pm.mdd_pct.toFixed(1)} | ${pm.composite.toFixed(1)} | ${flag} |\n`;
+      md += `| ${pm.period} | ${pm.n} | ${(pm.win_rate * 100).toFixed(2)}% | ${pm.profit_factor.toFixed(3)} | ${pm.mdd_pct.toFixed(2)} | ${pm.composite.toFixed(2)} | ${flag} |\n`;
     });
   }
 
@@ -104,7 +104,7 @@ function formatBacktestResult(result: BacktestResult): string {
     md += `| Metric | Value |\n|---|---|\n`;
     md += `| Raw Sharpe | ${robustness.raw_sharpe.toFixed(3)} |\n`;
     md += `| DSR | ${robustness.dsr.toFixed(3)} |\n`;
-    md += `| Inflation | ${robustness.dsr_inflation_pct.toFixed(1)}% |\n`;
+    md += `| Inflation | ${robustness.dsr_inflation_pct.toFixed(2)}% |\n`;
     if (robustness.dsr_inflation_pct > 50) {
       md += `\n> ⚠️ High multiple-testing inflation — raw Sharpe is unreliable.\n`;
     }
@@ -114,9 +114,9 @@ function formatBacktestResult(result: BacktestResult): string {
     md += `\n**Worst-Window Analysis**\n\n`;
     md += `| Metric | Value |\n|---|---|\n`;
     md += `| Window Size | ${ww.window_size} trades |\n`;
-    md += `| Worst Composite | ${ww.worst_composite.toFixed(1)} |\n`;
-    md += `| Full-Sample Composite | ${ww.full_sample_composite.toFixed(1)} |\n`;
-    md += `| Drop | ${ww.drop_points.toFixed(1)} points |\n`;
+    md += `| Worst Composite | ${ww.worst_composite.toFixed(2)} |\n`;
+    md += `| Full-Sample Composite | ${ww.full_sample_composite.toFixed(2)} |\n`;
+    md += `| Drop | ${ww.drop_points.toFixed(2)} points |\n`;
     md += `| Windows Tested | ${ww.n_windows_tested} |\n`;
     if (ww.drop_points > 20) {
       md += `\n> ⚠️ Severe worst-window drop — strategy edge may be fragile.\n`;
@@ -127,7 +127,7 @@ function formatBacktestResult(result: BacktestResult): string {
     if (fragileItems.length > 0) {
       md += `\n**⚠️ Fragile Trade Dependency**\n\n`;
       fragileItems.forEach((f) => {
-        md += `- Removing top ${f.k} trades drops TSI by **${f.tsi_drop.toFixed(1)}** points (${f.tsi_full.toFixed(1)} → ${f.tsi_without.toFixed(1)})\n`;
+        md += `- Removing top ${f.k} trades drops TSI by **${f.tsi_drop.toFixed(2)}** points (${f.tsi_full.toFixed(2)} → ${f.tsi_without.toFixed(2)})\n`;
       });
     }
 
@@ -146,7 +146,7 @@ function formatBacktestResult(result: BacktestResult): string {
   if (drift) {
     md += `\n### Exit Quality\n\n`;
     md += `| Metric | Value |\n|---|---|\n`;
-    md += `| Avg MFE Capture | ${drift.avg_exit_quality.toFixed(1)}% |\n`;
+    md += `| Avg MFE Capture | ${drift.avg_exit_quality.toFixed(2)}% |\n`;
     md += `| Exits Flagged | ${drift.exits_flagged} / ${drift.total_exits} |\n`;
     md += `| Drift Estimate | ${(drift.drift_estimate_pct * 100).toFixed(2)}% |\n`;
     md += `| Bar Magnifier Baseline | ${(drift.baseline_pct * 100).toFixed(2)}% |\n`;

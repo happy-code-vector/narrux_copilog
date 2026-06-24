@@ -272,7 +272,7 @@ def parse_backtest_xlsx(
             win_rate=round(win_rate, 4),
             profit_factor=round(profit_factor, 3),
             net_pnl=round(total_pnl, 2),
-            net_pnl_pct=round((total_pnl / capital_basis) * 100, 4) if capital_basis > 0 else 0.0,
+            net_pnl_pct=round(((total_pnl - capital_basis) / capital_basis) * 100, 4) if capital_basis > 0 else 0.0,
             max_drawdown_pct=round(max_dd, 4),
             sharpe_ratio=round(sharpe, 3),
             stop_loss_count=sum(1 for t in raw_trades if "stop loss" in t.exit_reason.lower()),
