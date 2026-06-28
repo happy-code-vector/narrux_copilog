@@ -601,12 +601,13 @@ async def interpret_backtest(request: InterpretRequest):
             "Your job is to EXPLAIN and INTERPRET this data. "
             "Every factual claim must reference a specific number or metric from the Structured Input. "
             "The Structured Input IS your verified source — cite values from it directly.\n\n"
-            "When suggesting parameter improvements, you MUST:\n"
-            "1. Read the diagnosis in strategy_context.diagnosis — it tells you what's wrong\n"
-            "2. Use strategy_context.relevant_parameters — only discuss these specific params\n"
-            "3. Give concrete values: 'change X from 2.5 to 2.0', not 'consider adjusting X'\n"
-            "4. Ground every suggestion in a specific metric from the tool outputs\n"
         )
+            # "When suggesting parameter improvements, you MUST:\n"
+            # "1. Read the diagnosis in strategy_context.diagnosis — it tells you what's wrong\n"
+            # "2. Use strategy_context.relevant_parameters — only discuss these specific params\n"
+            # "3. Give concrete values: 'change X from 2.5 to 2.0', not 'consider adjusting X'\n"
+            # "4. Ground every suggestion in a specific metric from the tool outputs\n"
+        # )
 
         full_prompt = f"{interpret_system}\n\n---\n\n{f02_prompt}\n\n## Structured Input\n```json\n{structured_input}\n```"
 
@@ -620,8 +621,8 @@ async def interpret_backtest(request: InterpretRequest):
         llm_request = LLMRequest(
             system_prompt=full_prompt,
             user_message=f"Interpret this backtest for {request.strategy_id} ({request.asset}). "
-                         f"Produce a full interpretive report following the F-02 workflow, "
-                         f"with specific data-driven improvement suggestions based on the diagnosis.",
+                         f"Produce a full interpretive report following the F-02 workflow, ",
+                        #  f"with specific data-driven improvement suggestions based on the diagnosis.",
             context_chunks=[],  # No RAG — all context is in structured_input
             model=model,
             max_tokens=settings.max_tokens_per_response,
