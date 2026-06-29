@@ -64,7 +64,7 @@ export function SidebarPanel({
           mono
         />
         <Row label="Vector DB" value="Qdrant" mono />
-        <Row label="Embeddings" value="Gemini" mono />
+        <Row label="Embeddings" value="Voyage" mono />
       </Card>
 
       {/* Governance */}
