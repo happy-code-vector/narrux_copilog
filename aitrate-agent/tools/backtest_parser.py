@@ -22,6 +22,7 @@ logger = structlog.get_logger(__name__)
 
 # Column name normalization map — handles both TradingView export variants
 _COLUMN_ALIASES = {
+    "trade number": "trade_num",
     "trade #": "trade_num",
     "type": "type",
     "date/time": "datetime",
