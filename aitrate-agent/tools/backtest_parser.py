@@ -34,6 +34,8 @@ _COLUMN_ALIASES = {
     "size (value)": "value",
     "net p&l usdt": "net_pnl",
     "net p&l %": "net_pnl_pct",
+    "net pnl usdt": "net_pnl",
+    "net pnl %": "net_pnl_pct",
     "run-up usdt": "runup_usdt",
     "favorable excursion usdt": "runup_usdt",
     "run-up %": "runup_pct",
@@ -44,6 +46,8 @@ _COLUMN_ALIASES = {
     "adverse excursion %": "drawdown_pct",
     "cumulative p&l usdt": "cum_pnl",
     "cumulative p&l %": "cum_pnl_pct",
+    "cumulative pnl usdt": "cum_pnl",
+    "cumulative pnl %": "cum_pnl_pct",
 }
 
 
