@@ -62,7 +62,7 @@ def _find_trades_sheet(wb) -> str | None:
     """Find the 'List of Trades' sheet (case-insensitive, handles variants)."""
     for name in wb.sheetnames:
         lower = name.lower().strip()
-        if "list of trades" in lower or "list of trade" in lower:
+        if "list of trades" in lower or "list of trade" in lower or "trades" in lower or "trade" in lower:
             return name
     return None
 
